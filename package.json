@@ -1,0 +1,30 @@
+{
+  "name": "backend-chatgpt",
+  "version": "3.0.0",
+  "description": "Backend LiterIA - generación asistida de RSL, importación, cribado IA, referencias, colaboración, búsqueda semántica y panel admin",
+  "main": "server.js",
+  "private": true,
+  "engines": {
+    "node": ">=18.17"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "check": "node --check server.js && node -e \"require('./routes')\"",
+    "audit": "npm audit --omit=dev"
+  },
+  "license": "ISC",
+  "dependencies": {
+    "axios": "^1.12.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.6.1",
+    "express": "^4.21.2",
+    "express-rate-limit": "^7.5.1",
+    "helmet": "^8.1.0",
+    "nodemailer": "^10.0.10",
+    "pdf-parse": "^1.1.1",
+    "zod": "^3.25.76",
+    "@supabase/supabase-js": "^2.58.0",
+    "jose": "^6.1.0"
+  }
+}
