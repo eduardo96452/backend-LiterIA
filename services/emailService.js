@@ -59,4 +59,17 @@ async function sendNewSessionMail({ to, dispositivo, ip, fecha }) {
   });
 }
 
-module.exports = { sendContactMail, sendInvitationMail, sendNewSessionMail };
+async function sendAdminCodeMail({ to, codigo, destinatario, minutos }) {
+  const t = getTransporter();
+  await t.sendMail({
+    from: `"LiterIA" <${env.GMAIL_USER}>`,
+    to,
+    subject: `Código de confirmación: ${codigo}`,
+    text: `Has solicitado dar el rol de administrador a ${destinatario}.\n\n` +
+          `Código de confirmación: ${codigo}\n` +
+          `Caduca en ${minutos} minutos.\n\n` +
+          `Si no has sido tú, no lo uses y revisa quién tiene acceso a tu cuenta.`
+  });
+}
+
+module.exports = { sendContactMail, sendInvitationMail, sendNewSessionMail, sendAdminCodeMail };

@@ -196,7 +196,7 @@ const id = z.coerce.number().int().positive();
 const uuid = z.string().uuid();
 
 const adminActivo = z.object({ activo: z.boolean() });
-const adminRol = z.object({ rol: z.enum(['admin', 'usuario']) });
+const adminRol = z.object({ rol: z.enum(['admin', 'usuario']), codigo: z.string().trim().max(10).optional() });
 
 const importarBase = {
   fuente: z.enum(['openalex', 'semantic_scholar', 'crossref']),

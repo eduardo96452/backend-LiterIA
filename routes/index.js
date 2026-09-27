@@ -106,6 +106,7 @@ adminRouter.get('/resumen',              asyncHandler(adminCtl.resumen));
 adminRouter.get('/usuarios',             asyncHandler(adminCtl.usuarios));
 adminRouter.get('/uso',                  asyncHandler(adminCtl.uso));
 adminRouter.patch('/usuarios/:id/activo', validate(S.adminActivo), asyncHandler(adminCtl.setActivo));
+adminRouter.post('/usuarios/:id/rol/codigo', asyncHandler(adminCtl.pedirCodigoRol));
 adminRouter.patch('/usuarios/:id/rol',    validate(S.adminRol),    asyncHandler(adminCtl.setRol));
 router.use('/admin', adminRouter);
 
