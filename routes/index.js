@@ -92,6 +92,7 @@ post('/referencias/verificar',              heavyLimiter,    validate(S.referenc
 router.get('/referencias/doi/:doi(*)',                                                         asyncHandler(referenciasCtl.porDoi));
 // Tanda C
 post('/cuenta/aviso-inicio-sesion',          contactLimiter,  asyncHandler(cuentaCtl.avisoInicioSesion));
+post('/cuenta/cerrar-sesion',                heavyLimiter,    asyncHandler(cuentaCtl.cerrarSesion));
 
 post('/colaboradores/invitar',              contactLimiter,  validate(S.invitar),              asyncHandler(colaboradoresCtl.invitar));
 post('/semantica/indexar',                  heavyLimiter,    validate(S.semanticaIndexar),     asyncHandler(semanticaCtl.indexar));
