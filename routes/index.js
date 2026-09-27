@@ -36,6 +36,7 @@ const importacionCtl = require('../controllers/importacionController');
 const cribadoCtl = require('../controllers/cribadoController');
 const referenciasCtl = require('../controllers/referenciasController');
 const colaboradoresCtl = require('../controllers/colaboradoresController');
+const cuentaCtl = require('../controllers/cuentaController');
 const semanticaCtl = require('../controllers/semanticaController');
 
 const router = express.Router();
@@ -90,6 +91,8 @@ post('/cribado/sugerir',                    heavyLimiter,    validate(S.cribadoS
 post('/referencias/verificar',              heavyLimiter,    validate(S.referenciasVerificar), asyncHandler(referenciasCtl.verificar));
 router.get('/referencias/doi/:doi(*)',                                                         asyncHandler(referenciasCtl.porDoi));
 // Tanda C
+post('/cuenta/aviso-inicio-sesion',          contactLimiter,  asyncHandler(cuentaCtl.avisoInicioSesion));
+
 post('/colaboradores/invitar',              contactLimiter,  validate(S.invitar),              asyncHandler(colaboradoresCtl.invitar));
 post('/semantica/indexar',                  heavyLimiter,    validate(S.semanticaIndexar),     asyncHandler(semanticaCtl.indexar));
 post('/semantica/buscar',                                    validate(S.semanticaBuscar),      asyncHandler(semanticaCtl.buscar));

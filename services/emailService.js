@@ -44,4 +44,19 @@ async function sendInvitationMail({ to, invitadoPor, tituloRevision, rol, enlace
   });
 }
 
-module.exports = { sendContactMail, sendInvitationMail };
+async function sendNewSessionMail({ to, dispositivo, ip, fecha }) {
+  const t = getTransporter();
+  await t.sendMail({
+    from: `"LiterIA" <${env.GMAIL_USER}>`,
+    to,
+    subject: 'Nuevo inicio de sesión en tu cuenta de LiterIA',
+    text: `Se ha iniciado sesión en tu cuenta de LiterIA.\n\n` +
+          `Dispositivo: ${dispositivo}\n` +
+          `Dirección IP: ${ip}\n` +
+          `Fecha: ${fecha}\n\n` +
+          `Si fuiste tú, puedes ignorar este mensaje.\n` +
+          `Si no reconoces este acceso, entra en Perfil → Sesiones activas, cierra esa sesión y cambia tu contraseña.`
+  });
+}
+
+module.exports = { sendContactMail, sendInvitationMail, sendNewSessionMail };
