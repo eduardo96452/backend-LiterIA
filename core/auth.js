@@ -56,6 +56,8 @@ async function autenticarConJwt(req, token) {
   req.user = {
     id: payload.sub,
     email: payload.email,
+    // Nombre del registro (user_metadata.name): solo para saludar en los correos
+    nombre: String(payload.user_metadata?.name || payload.user_metadata?.full_name || '').trim() || null,
     rol: payload.app_metadata?.rol || 'usuario'
   };
   const ctx = getContext(); if (ctx) ctx.userId = payload.sub;

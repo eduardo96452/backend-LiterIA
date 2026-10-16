@@ -65,11 +65,13 @@ const TIPOS_CAMPO = ['Texto', 'Booleano', 'Entero', 'Decimal', 'Fecha'];
 const campo = z.object({
   descripcion: texto(1000, 1, 'La descripción no puede estar vacía.'),
   tipo: z.enum(TIPOS_CAMPO).default('Texto'),
-  orden: z.coerce.number().int().min(0).max(100000).optional()
+  orden: z.coerce.number().int().min(0).max(100000).optional(),
+  id_pregunta_investigacion: id.nullable().optional()      // pregunta a la que responde (sql/010)
 }).strict();
 const campoCambio = z.object({
   descripcion: texto(1000, 1, 'La descripción no puede estar vacía.').optional(),
-  tipo: z.enum(TIPOS_CAMPO).optional()
+  tipo: z.enum(TIPOS_CAMPO).optional(),
+  id_pregunta_investigacion: id.nullable().optional()
 }).strict().refine(noVacio, SIN_CAMBIOS);
 const orden = z.object({ ids: z.array(id).min(1).max(500) }).strict();
 
@@ -80,7 +82,8 @@ const ia = {
   objetivo: z.object({}).strict(),
   estructura: z.object({ id_metodologia: id }).strict(),
   preguntas: z.object({ cantidad: z.coerce.number().int().min(1).max(10).default(3), id_metodologia: id.optional() }).strict(),
-  'palabras-clave': z.object({}).strict(),
+  // idioma de los términos (por defecto inglés, el de indexación de las bases)
+  'palabras-clave': z.object({ idioma: texto(50, 1, 'Indica el idioma de los términos.').optional() }).strict(),
   cadena: z.object({ idioma: texto(50, 1, 'Indica el idioma de la cadena.') }).strict(),
   criterios: z.object({}).strict(),
   calidad: z.object({}).strict(),

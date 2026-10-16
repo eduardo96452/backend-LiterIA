@@ -180,7 +180,12 @@ describe('extracción: guardar', () => {
 });
 
 describe('extracción: sugerencias de la IA', () => {
-  const IA_OK = '{"suggestions":[{"answer":"Ecuador"},{"answer":"Sí"},{"answer":"120 estudiantes"},{"answer":"2024-03-05"}]}';
+  const IA_OK = JSON.stringify({ respuestas: [
+    { id: 'C1', encontrado: true, valor: 'Ecuador', evidencia: 'estudio en Ecuador con 120 estudiantes', pagina: null },
+    { id: 'C2', encontrado: true, valor: 'Sí', evidencia: '', pagina: null },
+    { id: 'C3', encontrado: true, valor: '120 estudiantes', evidencia: 'con 120 participantes inventados', pagina: 2 },
+    { id: 'C4', encontrado: true, valor: '2024-03-05', evidencia: '', pagina: null }
+  ] });
 
   test('lee el PDF del bucket (no una URL), propone por campo y convierte la fecha al formato del formulario', async () => {
     respuestaIA = () => IA_OK;
@@ -191,18 +196,33 @@ describe('extracción: sugerencias de la IA', () => {
     });
     const r = await pide('post', '/revisiones/5/estudios/10/extraccion/sugerir', {});
     assert.equal(r.status, 200, JSON.stringify(r.body));
-    assert.deepEqual(r.body, { sugerencias: { 1: 'Ecuador', 2: true, 3: 120, 4: '2024-03-05' } });
+    assert.deepEqual(r.body.sugerencias, { 1: 'Ecuador', 2: true, 3: 120, 4: '2024-03-05' });
+    assert.deepEqual(r.body.evidencias, {
+      1: { cita: 'estudio en Ecuador con 120 estudiantes', pagina: null, verificada: true },
+      3: { cita: 'con 120 participantes inventados', pagina: 2, verificada: false }      // no está en el PDF: sin verificar
+    });
+    assert.deepEqual(r.body.no_reportados, []);
     assert.deepEqual(h.paso(almacen('download')[0], 'download')[1], ['estudios/10/123_articulo.pdf']);
     assert.deepEqual(descargas, ['texto:%PDF-1.4'], 'no descarga ninguna URL');
     const prompt = llamadasIA[0][1].content;
-    assert.match(prompt, /1\. País del estudio \(Tipo: Texto\)/);
-    assert.match(prompt, /4\. Fecha de publicación \(Tipo: Fecha\)/);
-    assert.match(prompt, /Título: Tutores inteligentes en la universidad/);
+    assert.match(prompt, /C1\. País del estudio — tipo Texto/);
+    assert.match(prompt, /C4\. Fecha de publicación — tipo Fecha/);
+    assert.match(prompt, /estudio «Tutores inteligentes en la universidad»/);
+    assert.match(prompt, /Responde TODOS los campos/);
 
-    // Sin un valor claro no hay propuesta: «Sin información» ya no se toma como Sí
-    respuestaIA = () => '{"suggestions":[{"answer":null},{"answer":"Sin información"},{"answer":"varios"},{"answer":"05/03/2024"}]}';
+    // Sin un valor claro no hay propuesta: «Sin información» ya no se toma como Sí; en un campo de
+    // texto, «no reportado» es la respuesta; los que falten se piden otra vez (una sola)
+    let vuelta = 0;
+    respuestaIA = () => (++vuelta === 1
+      ? '{"respuestas":[{"id":"C1","encontrado":false,"valor":null},{"id":"C2","valor":"Sin información"},{"id":"C4","valor":"05/03/2024"}]}'
+      : '{"respuestas":[{"id":"C3","encontrado":true,"valor":"varios"}]}');
+    llamadasIA.length = 0;
     const r2 = await pide('post', '/revisiones/5/estudios/10/extraccion/sugerir', {});
-    assert.deepEqual(r2.body, { sugerencias: { 4: '2024-03-05' } });
+    assert.deepEqual(r2.body.sugerencias, { 1: 'No reportado en el estudio.', 4: '2024-03-05' });
+    assert.deepEqual(r2.body.no_reportados, [1, 2, 3]);
+    assert.equal(llamadasIA.length, 2, 'una segunda llamada solo con el campo que faltó');
+    assert.match(llamadasIA[1][1].content, /C3\. Tamaño de muestra/);
+    assert.doesNotMatch(llamadasIA[1][1].content, /C1\. País/);
   });
 
   test('si el usuario no puede leer el PDF por las políticas de Storage, lo lee el servidor (la fila ya pasó RLS)', async () => {

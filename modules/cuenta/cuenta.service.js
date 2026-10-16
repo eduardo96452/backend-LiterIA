@@ -170,6 +170,25 @@ function describirDispositivo(ua = '') {
 }
 
 /**
+ * IP para leerla en el correo: sin el prefijo IPv4-en-IPv6 (::ffff:) y, si es la propia máquina
+ * (al probar en local), dicho con palabras en lugar de «::1».
+ */
+function ipLegible(ip) {
+  const limpia = String(ip ?? '').trim().replace(/^::ffff:/i, '');
+  if (!limpia) return 'No disponible';
+  if (limpia === '::1' || limpia === '127.0.0.1') return 'Este mismo equipo (conexión local)';
+  return limpia;
+}
+
+/** «lunes, 12 de octubre de 2026, 15:20 (hora de Ecuador)». */
+function fechaLegible(fecha = new Date()) {
+  const texto = new Intl.DateTimeFormat('es-EC', {
+    dateStyle: 'full', timeStyle: 'short', timeZone: 'America/Guayaquil'
+  }).format(fecha);
+  return `${texto} (hora de Ecuador)`;
+}
+
+/**
  * Aviso de nuevo inicio de sesión. Lo pide el frontend justo después de entrar: el correo va
  * SIEMPRE a la dirección del token, nunca a una que llegue en la petición.
  */
@@ -180,9 +199,11 @@ async function avisoInicioSesion(ctx, { userAgent, ip }) {
   try {
     await email.sendNewSessionMail({
       to: destino,
+      nombre: ctx.user?.nombre || null,
       dispositivo: describirDispositivo(userAgent || ''),
-      ip,
-      fecha: new Date().toLocaleString('es-EC', { timeZone: 'America/Guayaquil' })
+      ip: ipLegible(ip),
+      fecha: fechaLegible(),
+      enlaceSesiones: `${env.FRONTEND_URL}/sesiones-activas`
     });
     return { enviado: true };
   } catch (e) {
@@ -195,5 +216,5 @@ async function avisoInicioSesion(ctx, { userAgent, ip }) {
 module.exports = {
   perfil, actualizarPerfil, cambiarAvatar, tipoDeImagen, rutaPropia,
   preferencias, guardarPreferencias, sesiones, sesionVigente, cerrarSesion, avisoInicioSesion,
-  describirDispositivo, MAX_AVATAR, BLOQUEO_TRAS_CIERRE
+  describirDispositivo, ipLegible, fechaLegible, MAX_AVATAR, BLOQUEO_TRAS_CIERRE
 };

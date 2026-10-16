@@ -6,6 +6,7 @@ const repo = require('./planificacion.repo');
 const catalogos = require('../catalogos/catalogos.repo');
 const revisiones = require('../revisiones/revisiones.service');
 const { HttpError } = require('../../core/httpError');
+const sb = require('../../infra/supabase');
 
 const conteo = v => Number(Array.isArray(v) ? v[0]?.count : v?.count) || 0;
 
@@ -94,7 +95,7 @@ async function obtener(ctx, idRev) {
         guardado: Boolean(umbral)
       }
     },
-    campos: campos.map(f => ({ id_campo_extraccion: f.id_campo_extraccion, descripcion: f.descripcion, tipo: f.tipo, orden: f.orden, respuestas: conteo(f.respuestas_extraccion) }))
+    campos: campos.map(vistaCampo)
   };
 }
 
@@ -230,21 +231,62 @@ async function guardarUmbral(ctx, idRev, { limite }) {
 
 /* ---------- Campos de extracción ---------- */
 
-const COLS_CAMPO = 'id_campo_extraccion, descripcion, tipo, orden';
+const COLS_CAMPO_ANTES = 'id_campo_extraccion, descripcion, tipo, orden';
+const COLS_CAMPO = `${COLS_CAMPO_ANTES}, id_pregunta_investigacion`;
 const refCampo = c => ({ idCol: 'id_campo_extraccion', id: c, revCol: 'id_revision' });
+const FALTA_SQL_010 = 'Para vincular un campo a una pregunta de investigación falta ejecutar sql/010_redaccion.sql en Supabase.';
+
+const vistaCampo = f => ({
+  id_campo_extraccion: f.id_campo_extraccion, descripcion: f.descripcion, tipo: f.tipo, orden: f.orden,
+  id_pregunta_investigacion: f.id_pregunta_investigacion ?? null, respuestas: conteo(f.respuestas_extraccion)
+});
 
 async function listarCampos(ctx, idRev) {
   const [, campos] = await Promise.all([revisiones.obtener(ctx, idRev), repo.campos(ctx.token, idRev)]);
-  return campos.map(f => ({ id_campo_extraccion: f.id_campo_extraccion, descripcion: f.descripcion, tipo: f.tipo, orden: f.orden, respuestas: conteo(f.respuestas_extraccion) }));
+  return campos.map(vistaCampo);
 }
 
-async function crearCampo(ctx, idRev, { descripcion, tipo, orden }) {
+/** La pregunta vinculada tiene que ser de esta revisión. */
+async function comprobarPregunta(ctx, idRev, idPregunta) {
+  if (idPregunta == null) return;
+  const preguntas = await repo.preguntas(ctx.token, idRev);
+  if (!preguntas.some(p => Number(p.id_preguntas_investigacion) === Number(idPregunta))) {
+    throw new HttpError(400, 'Esa pregunta de investigación no es de esta revisión.');
+  }
+}
+
+/**
+ * Inserta o cambia un campo. Con sql/010 sin ejecutar: si no se toca el vínculo con la pregunta,
+ * se repite sin esa columna; si se toca, se avisa del script que falta.
+ */
+async function conVinculo(datosCampo, operacion) {
+  const r = await operacion(COLS_CAMPO);
+  if (r.error && repo.faltaColumna(r.error)) {
+    if ('id_pregunta_investigacion' in datosCampo) throw new HttpError(409, FALTA_SQL_010);
+    const r2 = await operacion(COLS_CAMPO_ANTES);
+    if (r2.error) throw sb.fromSupabaseError(r2.error);
+    return r2.data;
+  }
+  if (r.error) throw sb.fromSupabaseError(r.error);
+  return r.data;
+}
+
+async function crearCampo(ctx, idRev, { descripcion, tipo, orden, id_pregunta_investigacion: idPregunta }) {
   await puedeEscribir(ctx, idRev);
+  await comprobarPregunta(ctx, idRev, idPregunta);
   // Sin orden: al final (el mayor + 1).
   const o = orden ?? (await repo.campos(ctx.token, idRev)).reduce((m, f) => Math.max(m, (Number(f.orden) || 0) + 1), 0);
-  return repo.insertar(ctx.token, 'campos_extraccion', { descripcion, tipo, orden: o, id_revision: idRev }, COLS_CAMPO);
+  const fila = { descripcion, tipo, orden: o, id_revision: idRev, ...(idPregunta !== undefined ? { id_pregunta_investigacion: idPregunta } : {}) };
+  return conVinculo(fila, cols => repo.insertarCrudo(ctx.token, 'campos_extraccion', fila, cols));
 }
-const cambiarCampo = (ctx, idRev, c, cambios) => cambiar(ctx, idRev, 'campos_extraccion', refCampo(c), cambios, COLS_CAMPO, NO_ESTA.campo);
+
+async function cambiarCampo(ctx, idRev, c, cambios) {
+  await puedeEscribir(ctx, idRev);
+  await comprobarPregunta(ctx, idRev, cambios.id_pregunta_investigacion);
+  const fila = await conVinculo(cambios, cols => repo.actualizarCrudo(ctx.token, 'campos_extraccion', { ...refCampo(c), idRev }, cambios, cols));
+  if (!fila) throw new HttpError(404, NO_ESTA.campo);
+  return fila;
+}
 const borrarCampo = (ctx, idRev, c) => quitar(ctx, idRev, 'campos_extraccion', refCampo(c), NO_ESTA.campo);
 
 async function ordenarCampos(ctx, idRev, ids) {

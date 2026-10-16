@@ -8,6 +8,8 @@ const revisiones = require('../revisiones/revisiones.service');
 const { HttpError } = require('../../core/httpError');
 const { sugerirCribado } = require('../../ia/cribado');
 const { criterioValido } = require('./estudios.service');
+const { buscarDuplicado, sugerenciaDeDuplicado } = require('./duplicados');
+const logger = require('../../core/logger');
 
 const cliente = ctx => sb.forUser(ctx.token);
 function datos({ data, error }) {
@@ -30,22 +32,25 @@ async function sugerir(ctx, idRev, { ids_estudios, solo_sin_clasificar, max }) {
   const criterios = await repo.criterios(ctx.token, idRev);
   if (!criterios.length) throw new HttpError(400, 'La revisión no tiene criterios de inclusión/exclusión definidos.');
 
-  let q = cliente(ctx).from('estudios').select('id_estudios, titulo, resumen, autores, anio, revista, estado')
+  let q = cliente(ctx).from('estudios').select('id_estudios, titulo, resumen, autores, anio, revista, estado, doi, id_externo')
     .eq('id_detalles_revision', idRev).order('id_estudios');
   if (ids_estudios?.length) q = q.in('id_estudios', ids_estudios);
   if (solo_sin_clasificar) q = q.ilike('estado', 'sin clasificar');
   const estudios = datos(await q.limit(max)) || [];
   if (!estudios.length) return { procesados: 0, sugerencias: [], errores: [] };
 
+  // Todos los de la revisión, para reconocer copias antes de gastar tokens en ellas
+  const todos = await repo.todas(conteo => cliente(ctx).from('estudios')
+    .select('id_estudios, titulo, doi, id_externo, anio, estado', conteo ? { count: 'exact' } : undefined)
+    .eq('id_detalles_revision', idRev).order('id_estudios'));
+
   const sugerencias = [], errores = [];
   const LOTE = 4;                                     // concurrencia limitada (límites de OpenAI)
   for (let i = 0; i < estudios.length; i += LOTE) {
     const parte = await Promise.allSettled(estudios.slice(i, i + LOTE).map(async e => {
-      const s = await sugerirCribado(e, criterios, revision.objetivo);
-      await sb.rpc(cliente(ctx), 'fn_guardar_sugerencia_cribado', {
-        p_id_estudio: e.id_estudios, p_sugerencia: s.sugerencia, p_id_criterio: s.id_criterio,
-        p_confianza: s.confianza, p_justificacion: s.justificacion, p_modelo: env.OPENAI_MODEL
-      });
+      const copia = buscarDuplicado(e, todos);
+      const s = copia ? sugerenciaDeDuplicado(copia) : await sugerirCribado(e, criterios, revision.objetivo);
+      await guardarSugerencia(ctx, e.id_estudios, s, copia ? 'deteccion-duplicados' : env.OPENAI_MODEL);
       return { id_estudios: e.id_estudios, ...s };
     }));
     parte.forEach((r, j) => (r.status === 'fulfilled'
@@ -53,6 +58,23 @@ async function sugerir(ctx, idRev, { ids_estudios, solo_sin_clasificar, max }) {
       : errores.push({ id_estudios: estudios[i + j].id_estudios, error: r.reason?.message || 'error' })));
   }
   return { procesados: sugerencias.length, sugerencias, errores };
+}
+
+/**
+ * Guarda la sugerencia. Si la base aún no admite «Duplicado» (falta sql/009), la sugerencia se
+ * devuelve igualmente a la pantalla, aunque no quede guardada.
+ */
+async function guardarSugerencia(ctx, idEstudio, s, modelo) {
+  try {
+    await sb.rpc(cliente(ctx), 'fn_guardar_sugerencia_cribado', {
+      p_id_estudio: idEstudio, p_sugerencia: s.sugerencia, p_id_criterio: s.id_criterio,
+      p_confianza: s.confianza, p_justificacion: s.justificacion, p_modelo: modelo
+    });
+  } catch (e) {
+    const sinMigracion = s.sugerencia === 'Duplicado' && /check|23514|sugerencia_check/i.test(`${e.code} ${e.message}`);
+    if (!sinMigracion) throw e;
+    logger.warn('sugerencia_duplicado_sin_guardar', { motivo: 'falta sql/009_sugerencia_duplicado.sql' });
+  }
 }
 
 /* ---------- Cribado independiente ---------- */

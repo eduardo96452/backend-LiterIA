@@ -51,6 +51,14 @@ const schema = z.object({
   CROSSREF_MAILTO: z.string().email().optional().or(z.literal('')),
   OPENALEX_MAILTO: z.string().email().optional().or(z.literal('')),
   SEMANTIC_SCHOLAR_API_KEY: z.string().optional().or(z.literal('')),
+
+  // --- Consensus (fuentes de la redacción: Trabajos relacionados, Introducción y Discusión) ---
+  // Sin CONSENSUS_API_KEY se usa CrossRef con palabras clave, como antes.
+  CONSENSUS_API_KEY: z.string().optional().or(z.literal('')),
+  CONSENSUS_PAGE_SIZE: z.coerce.number().int().min(1).max(100).default(20),     // artículos por búsqueda (el plan gratuito admite 20)
+  CONSENSUS_MAX_CONSULTAS: z.coerce.number().int().min(1).max(5).default(3),    // búsquedas por sección generada
+  // Fragmentos del texto completo (solo planes de pago). Si el plan no los incluye, se dejan de pedir solos.
+  CONSENSUS_TEXTO_COMPLETO: z.preprocess(v => ['1', 'true', 'si', 'sí', 'yes', 'on'].includes(String(v ?? '').trim().toLowerCase()), z.boolean()).default(false),
   PDF_MAX_BYTES: z.coerce.number().int().positive().default(15 * 1024 * 1024)
 }).superRefine((v, ctx) => {
   if (v.AUTH_MODE === 'apikey' && !v.API_KEY) {

@@ -15,6 +15,9 @@ const logger = require('../../core/logger');
 const pdf = require('../../infra/pdf');
 const { HttpError } = require('../../core/httpError');
 const P = require('../../ia/prompts/extraccion');
+const IA = require('../../ia/sugerencias/extraccion');
+const planRepo = require('../planificacion/planificacion.repo');
+const registro = require('../informes/referencias/registro');
 const revisiones = require('../revisiones/revisiones.service');
 const estudiosSvc = require('../estudios/estudios.service');
 const repo = require('./extraccion.repo');
@@ -137,33 +140,53 @@ function paraElCampo(valor, tipo) {
   return valor;
 }
 
+const NO_REPORTADO = { es: 'No reportado en el estudio.', en: 'Not reported in the study.' };
+
 /**
- * POST /revisiones/:id/estudios/:e/extraccion/sugerir — una propuesta por campo, sin guardar nada:
- * la pantalla la muestra debajo de cada campo y la persona decide cuáles acepta.
+ * POST /revisiones/:id/estudios/:e/extraccion/sugerir — la IA lee el PDF y responde TODOS los campos,
+ * sin guardar nada: la pantalla muestra cada propuesta debajo de su campo, con la frase del artículo
+ * que la respalda y su página, y la persona decide cuáles acepta.
+ * Devuelve { sugerencias: {id_campo: valor}, evidencias: {id_campo: {cita, pagina, verificada}},
+ *            no_reportados: [id_campo…] } (los campos que el estudio no informa).
  */
 async function sugerir(ctx, idRev, idEstudio, { url }) {
   await revisiones.exigirEscritura(ctx, idRev);
-  const [estudio, campos] = await Promise.all([
+  const [estudio, campos, preguntas, idioma] = await Promise.all([
     estudiosSvc.estudioDe(ctx, idRev, idEstudio),
-    repo.campos(ctx.token, idRev)
+    planRepo.campos(ctx.token, idRev),
+    planRepo.preguntas(ctx.token, idRev).catch(() => []),
+    registro.idioma(ctx.token, idRev).catch(() => 'es')
   ]);
   if (!campos.length) {
     throw new HttpError(400, 'Esta revisión no tiene campos de extracción. Defínelos en Planificación.');
   }
 
-  const { fullText } = await pdf.extractText(await pdfDelEstudio(ctx, estudio, url));
+  const { fullText, pages } = await pdf.extractText(await pdfDelEstudio(ctx, estudio, url));
   P.exigirQueConcuerde(estudio.titulo, fullText);   // 412 si el PDF no es el del artículo
 
-  const valores = await P.sugerencias({
-    title: estudio.titulo, fullText,
-    questions: campos.map(c => ({ pregunta: c.descripcion, tipoRespuesta: c.tipo }))
+  const textoPregunta = new Map(preguntas.map((p, i) => [Number(p.id_preguntas_investigacion), `PI${i + 1}. ${String(p.pregunta).slice(0, 300)}`]));
+  const respuestas = await IA.sugerencias({
+    titulo: estudio.titulo, fullText, pages, idioma,
+    preguntas: [...textoPregunta.values()],
+    campos: campos.map(c => ({
+      id_campo: c.id_campo_extraccion, pregunta: String(c.descripcion).slice(0, 1000), tipo: c.tipo,
+      pi: c.id_pregunta_investigacion ? textoPregunta.get(Number(c.id_pregunta_investigacion)) : null
+    }))
   });
-  const sugerencias = {};
-  campos.forEach((c, i) => {
-    const v = paraElCampo(valores[i], c.tipo);
-    if (v !== null && v !== undefined && v !== '') sugerencias[c.id_campo_extraccion] = v;
-  });
-  return { sugerencias };
+
+  const sugerencias = {}, evidencias = {}, noReportados = [];
+  for (const c of campos) {
+    const r = respuestas.get(c.id_campo_extraccion);
+    if (!r?.encontrado) {
+      noReportados.push(c.id_campo_extraccion);
+      // En un campo de texto, «no reportado» también es una respuesta de la extracción
+      if (c.tipo === 'Texto' && r?.respondida) sugerencias[c.id_campo_extraccion] = NO_REPORTADO[idioma] || NO_REPORTADO.es;
+      continue;
+    }
+    sugerencias[c.id_campo_extraccion] = paraElCampo(r.valor, c.tipo);
+    if (r.evidencia) evidencias[c.id_campo_extraccion] = { cita: r.evidencia, pagina: r.pagina, verificada: r.verificada };
+  }
+  return { sugerencias, evidencias, no_reportados: noReportados };
 }
 
 module.exports = { obtener, guardar, marcar, sugerir, aFormulario, paraElCampo };

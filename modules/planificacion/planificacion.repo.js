@@ -71,10 +71,19 @@ async function umbral(token, idRev) {
     .eq('id_detalles_revision', idRev).maybeSingle());
 }
 
+/** ¿El error es una columna que no existe? (sql/010 sin ejecutar) */
+const faltaColumna = e => e?.code === '42703' || e?.code === 'PGRST204' || /column .* does not exist|could not find the '.*' column/i.test(e?.message || '');
+
+/**
+ * Campos de extracción con la pregunta de investigación a la que responden (sql/010). Si el
+ * script aún no se ejecutó, se leen sin ella.
+ */
 async function campos(token, idRev) {
-  return datos(await cliente(token).from('campos_extraccion')
-    .select('id_campo_extraccion, descripcion, tipo, orden, respuestas_extraccion(count)')
-    .eq('id_revision', idRev).order('orden').order('id_campo_extraccion')) || [];
+  const consulta = cols => cliente(token).from('campos_extraccion').select(cols)
+    .eq('id_revision', idRev).order('orden').order('id_campo_extraccion');
+  let r = await consulta('id_campo_extraccion, descripcion, tipo, orden, id_pregunta_investigacion, respuestas_extraccion(count)');
+  if (r.error && faltaColumna(r.error)) r = await consulta('id_campo_extraccion, descripcion, tipo, orden, respuestas_extraccion(count)');
+  return datos(r) || [];
 }
 
 /* ---------- Escritura simple (una fila, una sentencia) ---------- */
@@ -82,6 +91,14 @@ async function campos(token, idRev) {
 /** Inserta y devuelve la fila. */
 async function insertar(token, tabla, fila, columnas) {
   return datos(await cliente(token).from(tabla).insert(fila).select(columnas).single());
+}
+
+/** Como insertar/actualizar, pero devuelve el error de Supabase en vez de lanzarlo (para reintentar). */
+async function insertarCrudo(token, tabla, fila, columnas) {
+  return cliente(token).from(tabla).insert(fila).select(columnas).single();
+}
+async function actualizarCrudo(token, tabla, { idCol, id, revCol, idRev }, cambios, columnas) {
+  return cliente(token).from(tabla).update(cambios).eq(idCol, id).eq(revCol, idRev).select(columnas).maybeSingle();
 }
 
 /** Actualiza la fila `id` de la revisión. Devuelve la fila o null si no existe en esa revisión (o RLS no deja). */
@@ -127,7 +144,7 @@ const ordenarCampos = (token, idRev, ids) => rpc(token, 'fn_ordenar_campos_extra
 
 module.exports = {
   componentesRevision, preguntas, palabrasClave, bases, cadenas, criterios,
-  preguntasCalidad, respuestasCalidad, umbral, campos,
+  preguntasCalidad, respuestasCalidad, umbral, campos, faltaColumna, insertarCrudo, actualizarCrudo,
   insertar, actualizar, borrar, borrarCadena,
   guardarMetodologia, guardarPalabra, guardarBase, borrarBase, guardarCadena, guardarUmbral, ordenarCampos
 };

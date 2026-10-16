@@ -39,7 +39,7 @@ async function invitar(ctx, idRev, { correo, rol }) {
     if (error) throw sb.fromSupabaseError(error);
     try {
       await email.sendInvitationMail({
-        to: correo, rol, invitadoPor: ctx.user?.email || 'Un colega',
+        to: correo, rol, invitadoPor: ctx.user?.email || 'Un colega', nombreInvitador: ctx.user?.nombre || null,
         tituloRevision: rev?.titulo_revision || 'una revisión',
         enlace: `${env.FRONTEND_URL}/invitacion?token=${r.token}`
       });

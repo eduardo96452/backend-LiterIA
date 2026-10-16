@@ -34,6 +34,7 @@ const app = require('../app');
 const sb = require('../infra/supabase');
 const { normalizarTitulo, limpiarDoi } = require('../modules/estudios/campos');
 const { rutaDelPdf, nombreSeguro } = require('../modules/estudios/estudios.service');
+const { buscarDuplicado, similitud } = require('../modules/estudios/duplicados');
 
 // ---------- Supabase simulado ----------
 let responder;
@@ -475,6 +476,65 @@ describe('cribado', () => {
     responder = base({ criterios: () => ok([]) });
     r = await request(app).post('/api/v1/revisiones/5/cribado/sugerir').set('Authorization', auth).send({});
     assert.equal(r.status, 400);
+  });
+
+  test('sugerir: una copia de otro estudio recibe «Duplicado» sin llamar a la IA', async () => {
+    respuestaIA = () => JSON.stringify({ sugerencia: 'Rechazado', id_criterio: 2, confianza: 0.99, justificacion: 'IA' });
+    responder = base({
+      estudios: () => ok([
+        estudio({ titulo: 'Memory forensics for fileless malware detection', anio: 2021, resumen: 'R' }),
+        estudio({ id_estudios: 11, titulo: 'Memory Forensics for Fileless-Malware Detection.', anio: 2022, resumen: 'R' })
+      ]),
+      'rpc:fn_guardar_sugerencia_cribado': () => ok(1)
+    });
+    const r = await request(app).post('/api/v1/revisiones/5/cribado/sugerir').set('Authorization', await sesion())
+      .send({ ids_estudios: [10, 11], solo_sin_clasificar: false, max: 2 });
+    assert.equal(r.status, 200);
+    const porId = Object.fromEntries(r.body.sugerencias.map(x => [x.id_estudios, x]));
+    assert.equal(porId[10].sugerencia, 'Rechazado', 'el original lo decide la IA');
+    assert.equal(porId[11].sugerencia, 'Duplicado');
+    assert.equal(porId[11].id_original, 10);
+    assert.equal(porId[11].confianza, 1);
+    assert.match(porId[11].justificacion, /mismo trabajo que «Memory forensics for fileless malware detection» \(n\.º 10, 2021\): tienen el mismo título/);
+    assert.equal(llamadasIA.length, 1, 'solo se gastan tokens en el original');
+    const guardadas = consultas.filter(p => esRpc(p, 'fn_guardar_sugerencia_cribado')).map(p => p[0][1][1]);
+    assert.deepEqual(guardadas.map(g => [g.p_id_estudio, g.p_sugerencia, g.p_modelo === 'deteccion-duplicados']).sort(),
+      [[10, 'Rechazado', false], [11, 'Duplicado', true]]);
+  });
+
+  test('sugerir: sin sql/009 la sugerencia «Duplicado» se devuelve aunque no se guarde', async () => {
+    responder = base({
+      estudios: () => ok([estudio({ doi: '10.1/abc' }), estudio({ id_estudios: 11, titulo: 'Otro título', doi: 'https://doi.org/10.1/ABC' })]),
+      'rpc:fn_guardar_sugerencia_cribado': p => (p[0][1][1].p_sugerencia === 'Duplicado'
+        ? { data: null, error: { code: '23514', message: 'new row for relation "cribado_sugerencias" violates check constraint "cribado_sugerencias_sugerencia_check"' } }
+        : ok(1))
+    });
+    respuestaIA = () => JSON.stringify({ sugerencia: 'Aceptado', id_criterio: 1, confianza: 0.8, justificacion: 'IA' });
+    const r = await request(app).post('/api/v1/revisiones/5/cribado/sugerir').set('Authorization', await sesion())
+      .send({ ids_estudios: [10, 11], solo_sin_clasificar: false, max: 2 });
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.errores, []);
+    assert.match(r.body.sugerencias.find(x => x.id_estudios === 11).justificacion, /tienen el mismo DOI/);
+  });
+
+  test('buscarDuplicado: DOI, título casi idéntico con año compatible; el original no se marca', () => {
+    const todos = [
+      { id_estudios: 1, titulo: 'Detecting malware in RAM with Volatility', anio: 2020, doi: null, estado: 'Aceptado' },
+      { id_estudios: 2, titulo: 'Detecting malware in RAM with Volatility 3', anio: 2021, doi: null, estado: 'Sin clasificar' },
+      { id_estudios: 3, titulo: 'Detecting malware in RAM with Volatility', anio: 2015, doi: null, estado: 'Sin clasificar' },
+      { id_estudios: 4, titulo: 'Something else entirely', anio: 2020, doi: '10.5/X', estado: 'Sin clasificar' },
+      { id_estudios: 5, titulo: 'Different title', anio: 2020, doi: 'doi:10.5/x', estado: 'Sin clasificar' },
+      { id_estudios: 6, titulo: 'Detecting malware in RAM with Volatility', anio: 2020, doi: null, estado: 'Duplicado' }
+    ];
+    assert.equal(buscarDuplicado(todos[0], todos), null, 'el primero es el original');
+    const d2 = buscarDuplicado(todos[1], todos);
+    assert.equal(d2.original.id_estudios, 1);
+    assert.equal(d2.motivo, 'titulo_similar');
+    assert.ok(d2.similitud >= 0.85 && d2.similitud < 1);
+    assert.equal(buscarDuplicado(todos[2], todos).motivo, 'titulo_exacto', 'título idéntico: el año no importa');
+    assert.equal(buscarDuplicado(todos[4], todos).motivo, 'doi');
+    assert.ok(similitud('memory forensics', 'memory forensic') > 0.7);
+    assert.equal(similitud('abc', ''), 0);
   });
 
   test('cribado independiente: mis decisiones, registrar (criterio validado), resolver y kappa', async () => {

@@ -108,7 +108,7 @@ describe('GET /planificacion', () => {
     assert.deepEqual(b.calidad.preguntas.map(p => p.evaluaciones), [2, 0]);
     assert.deepEqual(b.calidad.respuestas[0], { id_respuesta: 1, descripcion: 'Sí', peso: 1.5, usos: 4 });
     assert.deepEqual(b.calidad.umbral, { limite: 2, maxima: 3, guardado: true }, 'máxima = 2 preguntas × peso mayor 1.5 (no la guardada)');
-    assert.deepEqual(b.campos[0], { id_campo_extraccion: 1, descripcion: 'Año', tipo: 'Entero', orden: 0, respuestas: 6 });
+    assert.deepEqual(b.campos[0], { id_campo_extraccion: 1, descripcion: 'Año', tipo: 'Entero', orden: 0, id_pregunta_investigacion: null, respuestas: 6 });
     for (const [tabla, col] of [['preguntas_investigacion', 'id_detalles_revision'], ['palabras_clave', 'id_detalles_revision'], ['componente_revision', 'id_revision'],
       ['bases_bibliograficas', 'id_revision'], ['cadenas_busqueda', 'id_detalles_revision'], ['criterios', 'id_detalles_revision'], ['campos_extraccion', 'id_revision']]) {
       assert.deepEqual(h.paso(deTabla(tabla)[0], 'eq')[1], [col, 5], `${tabla} filtra por la revisión`);
@@ -361,6 +361,29 @@ describe('campos de extracción', () => {
     assert.equal((await pide('delete', '/campos-extraccion/1')).status, 204);
     assert.equal((await pide('patch', '/campos-extraccion/1', {})).status, 400);
   });
+
+  test('vincular un campo a una pregunta de investigación: solo de esta revisión; sin sql/010 avisa', async () => {
+    const preguntas = () => ok([{ id_preguntas_investigacion: 7, pregunta: '¿P1?' }]);
+    responder = base({ preguntas_investigacion: preguntas, campos_extraccion: () => ok({ id_campo_extraccion: 1, descripcion: 'Año', tipo: 'Entero', orden: 0, id_pregunta_investigacion: 7 }) });
+    const r = await pide('patch', '/campos-extraccion/1', { id_pregunta_investigacion: 7 });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.id_pregunta_investigacion, 7);
+    assert.deepEqual(h.paso(deTabla('campos_extraccion', 'update').at(-1), 'update')[1][0], { id_pregunta_investigacion: 7 });
+    assert.equal((await pide('patch', '/campos-extraccion/1', { id_pregunta_investigacion: 99 })).status, 400);
+    assert.equal((await pide('patch', '/campos-extraccion/1', { id_pregunta_investigacion: null })).status, 200);
+
+    // Sin la columna: cambiar el vínculo → 409 con el script; cambiar otra cosa → se repite sin ella
+    const sinColumna = p => (JSON.stringify(p).includes('id_pregunta_investigacion')
+      ? { data: null, error: { code: '42703', message: 'column campos_extraccion.id_pregunta_investigacion does not exist' } }
+      : ok({ id_campo_extraccion: 1, descripcion: 'Año', tipo: 'Texto', orden: 0 }));
+    responder = base({ preguntas_investigacion: preguntas, campos_extraccion: sinColumna });
+    const falta = await pide('patch', '/campos-extraccion/1', { id_pregunta_investigacion: 7 });
+    assert.equal(falta.status, 409);
+    assert.match(falta.body.error, /sql\/010/);
+    const otra = await pide('patch', '/campos-extraccion/1', { tipo: 'Texto' });
+    assert.equal(otra.status, 200);
+    assert.equal(otra.body.tipo, 'Texto');
+  });
 });
 
 // ---------- IA ----------
@@ -377,15 +400,19 @@ describe('sugerencias de la IA', () => {
 
   test('objetivo: se arma con lo GUARDADO en la revisión, no con lo que mande el cliente', async () => {
     responder = base();
-    respuestaIA = () => '"Analizar el uso de tutores inteligentes."';
+    respuestaIA = () => '{"objetivo": "«Analizar el uso de tutores inteligentes.»"}';
     assert.equal((await pide('post', '/ia/objetivo', { title: 'Otro título' })).status, 400, 'no se aceptan datos en el cuerpo');
     const r = await pide('post', '/ia/objetivo', {});
     assert.equal(r.status, 200);
     assert.equal(r.body.objetivo, 'Analizar el uso de tutores inteligentes.');
-    assert.match(prompt(), /Título de la revisión: IA en educación/);
-    assert.match(prompt(), /Metodología de la revisión: RSL/);
-    assert.match(prompt(), /- País: Ecuador/);
+    assert.match(prompt(), /- Título: IA en educación/);
+    assert.match(prompt(), /- Tipo de revisión: RSL/);
+    assert.match(prompt(), /- Descripción: Revisión sobre tutores/);
+    assert.match(prompt(), /- Lugar: Ecuador/);
+    assert.match(prompt(), /- Tipo de investigación: cualitativa/);
+    assert.match(prompt(), /verbos que una revisión sistemática puede cumplir/);
     assert.doesNotMatch(prompt(), /Alcance/, 'los campos vacíos no se envían');
+    assert.doesNotMatch(prompt(), /- Objetivo:/, 'el objetivo guardado no se le da para escribir otro');
   });
 
   test('estructura: exige objetivo guardado; rellena por sigla o nombre los componentes del framework de la base', async () => {
@@ -432,11 +459,13 @@ describe('sugerencias de la IA', () => {
     responder = base({ palabras_clave: () => ok([]) });
     assert.equal((await pide('post', '/ia/cadena', { idioma: 'Inglés' })).status, 400);
     responder = base({ palabras_clave: () => ok([{ id_palabras_clave: 1, palabra_clave: 'tutor', sinonimos: [{ id_sinonimos: 1, sinonimo: 'ITS, chatbot' }] }]) });
-    respuestaIA = () => ' ("tutor" OR "ITS") ';
+    respuestaIA = () => JSON.stringify({ cadena: ' ("tutor" OR "ITS") ' });
     assert.equal((await pide('post', '/ia/cadena', {})).status, 400, 'el idioma es obligatorio');
     const r = await pide('post', '/ia/cadena', { idioma: 'Inglés' });
     assert.equal(r.body.cadena, '("tutor" OR "ITS")');
-    assert.match(prompt(), /\("tutor" OR "ITS" OR "chatbot"\)/);
+    assert.match(prompt(), /- tutor: "tutor", "ITS", "chatbot"/);
+    assert.match(prompt(), /Idioma de la cadena: Inglés/);
+    assert.match(prompt(), /máximo 4 bloques/);
   });
 
   test('criterios: la categoría de la IA pasa a inclusion/exclusion; campos: tipo válido y cantidad por defecto', async () => {
@@ -446,13 +475,53 @@ describe('sugerencias de la IA', () => {
     assert.deepEqual(r.body.criterios, [{ descripcion: 'Empíricos', tipo: 'inclusion' }, { descripcion: 'No revisados', tipo: 'exclusion' }]);
     respuestaIA = () => '{"questions":[{"pregunta":"¿Año?","tipo":"Entero"},{"pregunta":"¿País?","tipo":"Lista"}]}';
     const c = await pide('post', '/ia/campos-extraccion', {});
-    assert.deepEqual(c.body.campos, [{ descripcion: '¿Año?', tipo: 'Entero' }, { descripcion: '¿País?', tipo: 'Texto' }]);
-    assert.match(prompt(), /Genera 5 preguntas de extracción/);
+    assert.deepEqual(c.body.campos, [{ descripcion: '¿Año?', tipo: 'Entero', id_pregunta_investigacion: null },
+      { descripcion: '¿País?', tipo: 'Texto', id_pregunta_investigacion: null }]);
+    assert.match(prompt(), /diseña 5 campos del formulario/);
+  });
+
+  test('v3.9: cada sugerencia recibe lo guardado (framework, preguntas, criterios, escala) y los campos vienen vinculados a su pregunta', async () => {
+    responder = base({
+      preguntas_investigacion: () => ok([{ id_preguntas_investigacion: 7, pregunta: '¿Qué tutores se usan?' }, { id_preguntas_investigacion: 9, pregunta: '¿Con qué resultados?' }]),
+      criterios: () => ok([{ id_criterios: 1, descripcion: 'Estudios empíricos', tipo: 'inclusion', estudios: [{ count: 0 }] }]),
+      bases_bibliograficas: () => ok([{ id_base_bibliografica: 1, nombre: 'Scopus', url: '' }]),
+      evaluacion_calidad_respuestas: () => ok([{ id_respuesta: 1, descripcion: 'Sí', peso: 1 }, { id_respuesta: 2, descripcion: 'No', peso: 0 }]),
+      evaluacion_calidad_preguntas: () => ok([{ id_pregunta: 3, descripcion: '¿Objetivos claros?' }]),
+      campos_extraccion: () => ok([{ id_campo_extraccion: 80, descripcion: 'País', tipo: 'Texto', orden: 0 }])
+    });
+    respuestaIA = () => '{"criterios":[{"criterio":"Publicados entre 2016 y 2026","categoria":"inclusion"}]}';
+    await pide('post', '/ia/criterios', {});
+    assert.match(prompt(), /P \(Población\): Estudiantes/);
+    assert.match(prompt(), /PI1\. ¿Qué tutores se usan\?/);
+    assert.match(prompt(), /\[inclusión\] Estudios empíricos/);
+    assert.match(prompt(), /- Bases de datos: Scopus/);
+    assert.match(prompt(), /No repitas ni contradigas los criterios ya guardados/);
+
+    respuestaIA = () => '{"preguntas":["¿Se describe la muestra?"]}';
+    const q = await pide('post', '/ia/calidad', {});
+    assert.deepEqual(q.body.preguntas, ['¿Se describe la muestra?']);
+    assert.match(prompt(), /Escala de respuesta guardada: Sí \(1\) · No \(0\)/);
+    assert.match(prompt(), /ya guardadas:\n    ¿Objetivos claros\?/);
+
+    respuestaIA = () => JSON.stringify({ campos: [
+      { pregunta: '¿Qué tipo de tutor?', tipo: 'Texto', pi: 'PI1' }, { pregunta: '¿Mejora (%)?', tipo: 'Decimal', pi: 'RQ2' },
+      { pregunta: '¿País?', tipo: 'Texto', pi: null }, { pregunta: '¿Otra?', tipo: 'Texto', pi: 'PI8' }] });
+    const c = await pide('post', '/ia/campos-extraccion', { cantidad: 4 });
+    assert.deepEqual(c.body.campos.map(x => x.id_pregunta_investigacion), [7, 9, null, null]);
+    assert.match(prompt(), /PI2\. ¿Con qué resultados\?/);
+    assert.match(prompt(), /Campos ya guardados:\n    País \(Texto\)/);
+    assert.match(prompt(), /al menos un campo por pregunta/);
+
+    respuestaIA = () => '{"keywords":[]}';
+    await pide('post', '/ia/palabras-clave', { idioma: 'español' });
+    assert.match(prompt(), /Escribe los términos en español/);
+    await pide('post', '/ia/palabras-clave', {});
+    assert.match(prompt(), /Escribe los términos en inglés/, 'por defecto, inglés (idioma de indexación)');
   });
 
   test('límite propio («ia»): 22 sugerencias seguidas no chocan con el de 20 de las generaciones largas', async () => {
     responder = base();
-    respuestaIA = () => 'Objetivo';
+    respuestaIA = () => '{"objetivo":"Objetivo"}';
     const auth = await sesion();
     for (let i = 0; i < 22; i++) {
       const r = await request(app).post('/api/v1/revisiones/5/ia/objetivo').set('Authorization', auth).send({});
@@ -465,14 +534,15 @@ describe('sugerencias de la IA', () => {
     respuestaIA = () => '{"questions":["¿A?","¿B?","¿C?"]}';
     const r = await pide('post', '/ia/preguntas', { cantidad: 2, id_metodologia: 2 });
     assert.deepEqual(r.body.preguntas, ['¿A?', '¿B?']);
-    assert.match(prompt(), /metodología "SPICE"/);
-    assert.match(prompt(), /de tipo "cualitativa"/);
+    assert.match(prompt(), /con el framework SPICE/);
+    assert.match(prompt(), /- Tipo de investigación: cualitativa/);
     responder = base({ componente_revision: () => ok([{ id_componente_revision: 9, id_componente: 16, palabra_clave: 'Aula', componente: { id_metodologia: 2 } }]) });
     await pide('post', '/ia/preguntas', {});
-    assert.match(prompt(), /metodología "SPICE"/, 'sin indicar: el guardado en la revisión');
+    assert.match(prompt(), /con el framework SPICE/, 'sin indicar: el guardado en la revisión');
+    assert.match(prompt(), /S \(Setting\): Aula/, 'con los valores guardados del framework');
     responder = base({ componente_revision: () => ok([]) });
     await pide('post', '/ia/preguntas', {});
-    assert.match(prompt(), /metodología "PICO"/, 'sin nada guardado: PICO, como antes');
+    assert.match(prompt(), /con el framework PICO/, 'sin nada guardado: PICO, como antes');
     assert.equal((await pide('post', '/ia/preguntas', { cantidad: 50 })).status, 400);
   });
 });

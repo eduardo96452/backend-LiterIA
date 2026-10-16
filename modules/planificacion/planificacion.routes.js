@@ -47,7 +47,7 @@ const leer = consulta => h(async (req, res) => {
 });
 
 router.get('/criterios', conId, leer((cl, id) => cl.from('criterios').select('id_criterios, descripcion, tipo')
-  .eq('id_detalles_revision', id).order('fecha_ingreso', { ascending: true })));
+  .eq('id_detalles_revision', id).order('fecha_ingreso', { ascending: true }).order('id_criterios')));
 
 router.get('/bases', conId, leer((cl, id) => cl.from('bases_bibliograficas').select('id_base_bibliografica, nombre, url')
   .eq('id_revision', id).order('id_base_bibliografica')));
