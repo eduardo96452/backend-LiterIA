@@ -138,6 +138,21 @@ const borrarBase = (token, idRev, idBase) => rpc(token, 'fn_borrar_base', { p_id
 const guardarCadena = (token, idRev, fuente, texto) =>
   rpc(token, 'fn_guardar_cadena', { p_id_rev: idRev, p_fuente: fuente, p_cadena: texto });
 
+/** Estudios ya clasificados (no «Sin clasificar» ni «Duplicado») y sugerencias de la IA: lo que se pierde al cambiar criterios. */
+async function resumenCribado(token, idRev) {
+  const c = cliente(token);
+  const [clasificados, sugerencias] = await Promise.all([
+    c.from('estudios').select('id_estudios', { count: 'exact', head: true })
+      .eq('id_detalles_revision', idRev).not('estado', 'in', '("Sin clasificar","Duplicado")'),
+    c.from('cribado_sugerencias').select('id_sugerencia, estudios!inner(id_detalles_revision)', { count: 'exact', head: true })
+      .eq('estudios.id_detalles_revision', idRev)
+  ]);
+  return { clasificados: Number(clasificados?.count) || 0, sugerencias: Number(sugerencias?.count) || 0 };
+}
+
+/** sql/013: estudios a «Sin clasificar», sin sugerencias de la IA ni decisiones de los revisores. */
+const reiniciarCribado = (token, idRev) => rpc(token, 'fn_reiniciar_cribado', { p_id_rev: idRev });
+
 const guardarUmbral = (token, idRev, limite) => rpc(token, 'fn_guardar_umbral_calidad', { p_id_rev: idRev, p_limite: limite });
 
 const ordenarCampos = (token, idRev, ids) => rpc(token, 'fn_ordenar_campos_extraccion', { p_id_rev: idRev, p_ids: ids });
@@ -146,5 +161,6 @@ module.exports = {
   componentesRevision, preguntas, palabrasClave, bases, cadenas, criterios,
   preguntasCalidad, respuestasCalidad, umbral, campos, faltaColumna, insertarCrudo, actualizarCrudo,
   insertar, actualizar, borrar, borrarCadena,
-  guardarMetodologia, guardarPalabra, guardarBase, borrarBase, guardarCadena, guardarUmbral, ordenarCampos
+  guardarMetodologia, guardarPalabra, guardarBase, borrarBase, guardarCadena, guardarUmbral, ordenarCampos,
+  resumenCribado, reiniciarCribado
 };

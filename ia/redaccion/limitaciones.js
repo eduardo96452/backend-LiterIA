@@ -39,7 +39,7 @@ async function texto(c) {
   const instrucciones = [
     `TAREA: redacta la sección «${NOMBRE}» del artículo como amenazas a la validez de la revisión.`,
     '',
-    'ESTRUCTURA (3 o 4 párrafos, entre 350 y 600 palabras), un párrafo por tipo de amenaza:',
+    'ESTRUCTURA (3 a 5 párrafos, entre 350 y 800 palabras), un párrafo por tipo de amenaza:',
     '1. Validez de constructo: bases consultadas, términos y cadena de búsqueda, idioma y periodo; posibles estudios no recuperados.',
     '2. Validez interna: sesgo de selección, de extracción y de evaluación de la calidad; número de revisores y acuerdo; apoyo de la IA en el cribado si consta.',
     '3. Validez externa: en qué medida los hallazgos se pueden generalizar (periodo, tipos de publicación, contextos de los estudios).',

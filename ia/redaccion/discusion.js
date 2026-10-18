@@ -73,7 +73,7 @@ async function texto(c, { keywords: kw }) {
   const instrucciones = [
     `TAREA: redacta la sección «${NOMBRE}» del artículo de revisión sistemática y la lista de vacíos de investigación.`,
     '',
-    'ESTRUCTURA DE "discusion" (5 a 7 párrafos, entre 700 y 1100 palabras):',
+    'ESTRUCTURA DE "discusion" (5 a 8 párrafos, entre 800 y 1500 palabras; la extensión depende de los hallazgos que haya que discutir):',
     '1. Síntesis de los hallazgos principales en relación con el objetivo, sin repetir las cifras de Resultados.',
     '2-4. Interpretación por pregunta de investigación (menciona su código): qué significan los hallazgos, posibles explicaciones y contraste con la literatura previa (FUENTES EXTERNAS): coincidencias, diferencias y por qué. Para referirte a hallazgos concretos cita los estudios incluidos.',
     '5. Implicaciones para la práctica (docentes, profesionales, instituciones o responsables, según el tema).',

@@ -71,7 +71,7 @@ async function texto(c, { keywords: kw }) {
   const instrucciones = [
     `TAREA: redacta la sección «${NOMBRE}» del artículo de revisión sistemática.`,
     '',
-    'ESTRUCTURA (5 o 6 párrafos, entre 600 y 900 palabras):',
+    'ESTRUCTURA (5 a 7 párrafos, entre 600 y 1000 palabras; la extensión depende de lo que haya que contar):',
     '1-2. Contexto e importancia del tema, con citas.',
     '3. Problema o desafío concreto que motiva la revisión, con citas.',
     '4. Revisiones previas y vacío: qué han revisado otros trabajos y qué queda sin cubrir respecto al objetivo de esta revisión (cita las revisiones previas de FUENTES).',

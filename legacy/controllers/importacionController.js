@@ -1,5 +1,5 @@
 // legacy/controllers/importacionController.js  (Tanda A, mejora 1)
-// Consulta OpenAlex / Semantic Scholar / CrossRef, normaliza los resultados al formato que
+// Consulta IEEE Xplore / Springer Nature, normaliza los resultados al formato que
 // espera fn_importar_estudios y la llama COMO EL USUARIO (RLS aplica).
 const logger = require('../../core/logger');
 const { forUser, rpc } = require('../../infra/supabase');
@@ -30,7 +30,7 @@ async function importar(req, res) {
     try { r = await FUENTES[fuente]({ ...q, pagina: p }); }
     catch (e) {
       logger.warn('importacion_api_error', { fuente, pagina: p, message: e.message });
-      if (!recolectados.length) throw new HttpError(502, `No se pudo consultar ${fuente}.`);
+      if (!recolectados.length) throw e instanceof HttpError ? e : new HttpError(502, `No se pudo consultar ${fuente}.`);
       break; // se importa lo que se alcanzó a recolectar
     }
     total = r.total;

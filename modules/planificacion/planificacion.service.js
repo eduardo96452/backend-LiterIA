@@ -7,6 +7,7 @@ const catalogos = require('../catalogos/catalogos.repo');
 const revisiones = require('../revisiones/revisiones.service');
 const { HttpError } = require('../../core/httpError');
 const sb = require('../../infra/supabase');
+const logger = require('../../core/logger');
 
 const conteo = v => Number(Array.isArray(v) ? v[0]?.count : v?.count) || 0;
 
@@ -70,10 +71,11 @@ const maximaCalidad = (preguntas, respuestas) =>
 /** Todo lo que muestra la pantalla, en una petición (antes eran unas 20 consultas más una por base). */
 async function obtener(ctx, idRev) {
   const t = ctx.token;
-  const [revision, catalogo, filasFw, preguntas, filasKw, bases, cadenas, criterios, pc, rc, umbral, campos] = await Promise.all([
+  const [revision, catalogo, filasFw, preguntas, filasKw, bases, cadenas, criterios, pc, rc, umbral, campos, cribado] = await Promise.all([
     revisiones.obtener(ctx, idRev), metodologias(t), repo.componentesRevision(t, idRev), repo.preguntas(t, idRev),
     repo.palabrasClave(t, idRev), repo.bases(t, idRev), repo.cadenas(t, idRev), repo.criterios(t, idRev),
-    repo.preguntasCalidad(t, idRev), repo.respuestasCalidad(t, idRev), repo.umbral(t, idRev), repo.campos(t, idRev)
+    repo.preguntasCalidad(t, idRev), repo.respuestasCalidad(t, idRev), repo.umbral(t, idRev), repo.campos(t, idRev),
+    repo.resumenCribado(t, idRev).catch(() => ({ clasificados: 0, sugerencias: 0 }))
   ]);
   const metodologia = frameworkGuardado(filasFw, catalogo);
   const preguntasCalidad = pc.map(p => ({ id_pregunta: p.id_pregunta, descripcion: p.descripcion, evaluaciones: conteo(p.calidad_estudios) }));
@@ -95,7 +97,9 @@ async function obtener(ctx, idRev) {
         guardado: Boolean(umbral)
       }
     },
-    campos: campos.map(vistaCampo)
+    campos: campos.map(vistaCampo),
+    // Lo que se reinicia si cambian los criterios (la pantalla lo avisa antes)
+    cribado
   };
 }
 
@@ -190,13 +194,37 @@ async function borrarCadena(ctx, idRev, fuente) {
 const COLS_CRITERIO = 'id_criterios, descripcion, tipo';
 const refCriterio = c => ({ idCol: 'id_criterios', id: c, revCol: 'id_detalles_revision' });
 
+/**
+ * Con otros criterios, la clasificación hecha ya no vale: los estudios vuelven a «Sin clasificar» y se
+ * borran las sugerencias de la IA y las decisiones de los revisores (sql/013). Sin sql/013 el criterio
+ * se guarda igual y queda aviso en el log.
+ */
+async function reiniciarCribado(ctx, idRev) {
+  try {
+    const r = await repo.reiniciarCribado(ctx.token, idRev);
+    return { estudios: Number(r?.estudios) || 0, sugerencias: Number(r?.sugerencias) || 0, decisiones: Number(r?.decisiones) || 0 };
+  } catch (e) {
+    if (e?.status === 501 || e?.code === 'PGRST202' || /fn_reiniciar_cribado/.test(e?.message || '')) {
+      logger.warn('reiniciar_cribado_sin_sql', { message: 'Falta ejecutar sql/013_reiniciar_cribado.sql' });
+      return null;
+    }
+    throw e;
+  }
+}
+
 async function crearCriterio(ctx, idRev, { descripcion, tipo }) {
   await puedeEscribir(ctx, idRev);
-  return repo.insertar(ctx.token, 'criterios', { descripcion, tipo, id_detalles_revision: idRev }, COLS_CRITERIO);
+  const fila = await repo.insertar(ctx.token, 'criterios', { descripcion, tipo, id_detalles_revision: idRev }, COLS_CRITERIO);
+  return { ...fila, reinicio: await reiniciarCribado(ctx, idRev) };
 }
-const cambiarCriterio = (ctx, idRev, c, { descripcion }) =>
-  cambiar(ctx, idRev, 'criterios', refCriterio(c), { descripcion }, COLS_CRITERIO, NO_ESTA.criterio);
-const borrarCriterio = (ctx, idRev, c) => quitar(ctx, idRev, 'criterios', refCriterio(c), NO_ESTA.criterio);
+async function cambiarCriterio(ctx, idRev, c, { descripcion }) {
+  const fila = await cambiar(ctx, idRev, 'criterios', refCriterio(c), { descripcion }, COLS_CRITERIO, NO_ESTA.criterio);
+  return { ...fila, reinicio: await reiniciarCribado(ctx, idRev) };
+}
+async function borrarCriterio(ctx, idRev, c) {
+  await quitar(ctx, idRev, 'criterios', refCriterio(c), NO_ESTA.criterio);
+  await reiniciarCribado(ctx, idRev);
+}
 
 /* ---------- Instrumento de calidad ---------- */
 

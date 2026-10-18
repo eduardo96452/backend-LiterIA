@@ -49,8 +49,9 @@ const schema = z.object({
   CONTACT_TO: z.string().email().optional(),
 
   CROSSREF_MAILTO: z.string().email().optional().or(z.literal('')),
-  OPENALEX_MAILTO: z.string().email().optional().or(z.literal('')),
-  SEMANTIC_SCHOLAR_API_KEY: z.string().optional().or(z.literal('')),
+  // --- Bases académicas para buscar e importar estudios (cada una con su clave gratuita) ---
+    IEEE_API_KEY: z.string().optional().or(z.literal('')),       // developer.ieee.org
+    SPRINGER_API_KEY: z.string().optional().or(z.literal('')),   // dev.springernature.com (Meta API)
 
   // --- Consensus (fuentes de la redacción: Trabajos relacionados, Introducción y Discusión) ---
   // Sin CONSENSUS_API_KEY se usa CrossRef con palabras clave, como antes.

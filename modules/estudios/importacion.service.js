@@ -1,26 +1,40 @@
 // modules/estudios/importacion.service.js
-// Buscar en OpenAlex / Semantic Scholar / CrossRef e importar a la revisión.
-// La consulta a las bases es la de siempre (infra/academicas.js); la inserción la hace
-// fn_importar_estudios, que ya descarta los DOI repetidos. Aquí además se descartan los
-// títulos que ya están en la revisión (p. ej. los importados antes desde un .bib sin DOI).
+// Buscar en IEEE Xplore / Springer Nature e importar a la revisión.
+// La consulta a las bases está en infra/academicas.js; la inserción la hace fn_importar_estudios,
+// que ya descarta los DOI repetidos. Aquí además se descartan los títulos que ya están en la
+// revisión (p. ej. los importados antes desde un .bib sin DOI). Los importados quedan con el
+// nombre de la base tal como está en Planificación, para que el PRISMA los cuente en ella.
 const repo = require('./estudios.repo');
 const revisiones = require('../revisiones/revisiones.service');
 const sb = require('../../infra/supabase');
 const logger = require('../../core/logger');
 const { HttpError } = require('../../core/httpError');
-const { FUENTES } = require('../../infra/academicas');
+const { FUENTES, NOMBRES_FUENTE: NOMBRE } = require('../../infra/academicas');
 const { normalizarTitulo, claveDoi } = require('./campos');
-
-const NOMBRE = { openalex: 'OpenAlex', semantic_scholar: 'Semantic Scholar', crossref: 'CrossRef' };
 
 async function consultar(fuente, q) {
   try {
     return await FUENTES[fuente](q);
   } catch (e) {
     if (e instanceof HttpError) throw e;
-    logger.warn('importacion_api_error', { fuente, status: e.response?.status, message: e.message });
-    if (e.response?.status === 429) throw new HttpError(503, `${NOMBRE[fuente]} está limitando las peticiones; intenta en unos segundos.`);
+    const st = e.response?.status;
+    logger.warn('importacion_api_error', { fuente, status: st, message: e.message });
+    if (st === 429) throw new HttpError(503, `${NOMBRE[fuente]} está limitando las peticiones; intenta en unos segundos.`);
+    // IEEE responde 403 con la clave inactiva o el cupo diario agotado; Springer, 401/403 con la clave mala
+    if (st === 401 || st === 403) throw new HttpError(503, `${NOMBRE[fuente]} rechazó la consulta: revisa la clave de la API en el servidor o espera a que se renueve el cupo diario.`);
+    if (st === 400) throw new HttpError(400, `${NOMBRE[fuente]} no aceptó la cadena de búsqueda; simplifícala (menos términos o sin comodines).`);
     throw new HttpError(502, `No se pudo consultar ${NOMBRE[fuente]}.`);
+  }
+}
+
+/** Deja los importados con el nombre de la base de Planificación (o el de la fuente). Si falla, solo avisa. */
+async function ponerNombreDeBase(token, idRev, fuente, nombre) {
+  try {
+    const { error } = await sb.forUser(token).from('estudios').update({ fuente_bibliografica: nombre })
+      .eq('id_detalles_revision', idRev).eq('origen', fuente);
+    if (error) throw error;
+  } catch (e) {
+    logger.warn('importacion_nombre_base', { fuente, message: e.message });
   }
 }
 
@@ -33,7 +47,7 @@ async function clavesDeLaRevision(token, idRev) {
 }
 
 /** Vista previa: no guarda nada. Marca los resultados que ya están en la revisión. */
-async function buscar(ctx, idRev, { fuente, ...q }) {
+async function buscar(ctx, idRev, { fuente, base, ...q }) {
   await revisiones.obtener(ctx, idRev);
   const [r, claves] = await Promise.all([consultar(fuente, q), clavesDeLaRevision(ctx.token, idRev)]);
   const resultados = r.items.map(it => ({
@@ -44,7 +58,7 @@ async function buscar(ctx, idRev, { fuente, ...q }) {
 }
 
 /** Consulta N páginas y las inserta como «Sin clasificar», sin los que ya estaban. */
-async function importar(ctx, idRev, { fuente, paginas, ...q }) {
+async function importar(ctx, idRev, { fuente, paginas, base, ...q }) {
   await revisiones.exigirEscritura(ctx, idRev);
 
   let recolectados = [], total = 0;
@@ -60,13 +74,14 @@ async function importar(ctx, idRev, { fuente, paginas, ...q }) {
     if (r.items.length < q.porPagina) break;
   }
 
+  const nombreBase = (base || '').trim() || NOMBRE[fuente];
   const claves = await clavesDeLaRevision(ctx.token, idRev);
   const nuevos = recolectados.filter(it => {
     const t = normalizarTitulo(it.titulo);
     if (!t || claves.titulos.has(t)) return false;
     claves.titulos.add(t);
     return true;
-  });
+  }).map(it => ({ ...it, fuente_bibliografica: nombreBase }));
 
   const resultado = nuevos.length
     ? await sb.rpc(sb.forUser(ctx.token), 'fn_importar_estudios', {
@@ -78,6 +93,7 @@ async function importar(ctx, idRev, { fuente, paginas, ...q }) {
       p_total_api: total
     })
     : { id_importacion: null, recibidos: 0, importados: 0, duplicados: 0 };
+  if (resultado.importados) await ponerNombreDeBase(ctx.token, idRev, fuente, nombreBase);
 
   return {
     ...resultado,

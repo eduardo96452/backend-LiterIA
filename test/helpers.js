@@ -28,9 +28,9 @@ const { SignJWT } = require('jose');
 const nuevoId = () => crypto.randomUUID();
 
 /** JWT como los de Supabase. `caducado: true` → expirado hace un minuto. */
-async function token({ sub = nuevoId(), email = 'persona@uteq.edu.ec', rol, caducado = false, secreto = SECRETO_JWT } = {}) {
+async function token({ sub = nuevoId(), email = 'persona@uteq.edu.ec', rol, caducado = false, secreto = SECRETO_JWT, amr } = {}) {
   const ahora = Math.floor(Date.now() / 1000);
-  return new SignJWT({ email, role: 'authenticated', app_metadata: rol ? { rol } : {} })
+  return new SignJWT({ email, role: 'authenticated', app_metadata: rol ? { rol } : {}, ...(amr ? { amr } : {}) })
     .setProtectedHeader({ alg: 'HS256' })
     .setSubject(sub)
     .setIssuer(`${SUPABASE_URL}/auth/v1`)

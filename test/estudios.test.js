@@ -13,10 +13,10 @@ require.cache[path.join(__dirname, '../infra/academicas.js')] = {
   id: 'academicas-falso', filename: 'academicas-falso', loaded: true,
   exports: {
     FUENTES: {
-      openalex: async q => { llamadasFuentes.push(q); return paginasFuente(q); },
-      semantic_scholar: async q => { llamadasFuentes.push(q); return paginasFuente(q); },
-      crossref: async q => { llamadasFuentes.push(q); return paginasFuente(q); }
+      ieee: async q => { llamadasFuentes.push(q); return paginasFuente(q); },
+      springer: async q => { llamadasFuentes.push(q); return paginasFuente(q); }
     },
+    NOMBRES_FUENTE: { ieee: 'IEEE Xplore', springer: 'Springer Nature' },
     consultarDoi: doi => doiFalso(doi),
     limpiarDoi: d => d
   }
@@ -423,7 +423,7 @@ describe('importación', () => {
   test('buscar marca los resultados que ya están en la revisión', async () => {
     paginasFuente = () => ({ items: [item('Deep learning, a review', null), item('Nuevo', '10.1/aaa'), item('Otro', null)], total: 3 });
     responder = base({ estudios: () => ok([{ id_estudios: 1, titulo: 'Deep Learning: A Review', doi: '10.1/AAA', estado: 'Sin clasificar' }]) });
-    const r = await request(app).post('/api/v1/revisiones/5/importar/buscar').set('Authorization', await sesion()).send({ fuente: 'openalex', cadena: 'deep learning' });
+    const r = await request(app).post('/api/v1/revisiones/5/importar/buscar').set('Authorization', await sesion()).send({ fuente: 'ieee', cadena: 'deep learning' });
     assert.equal(r.status, 200);
     assert.deepEqual(r.body.resultados.map(x => x.ya_en_revision), [true, true, false]);
   });
@@ -437,18 +437,50 @@ describe('importación', () => {
       'rpc:fn_importar_estudios': p => ok({ id_importacion: 4, recibidos: p[0][1][1].p_estudios.length, importados: 1, duplicados: 0 })
     });
     const r = await request(app).post('/api/v1/revisiones/5/importar').set('Authorization', await sesion())
-      .send({ fuente: 'openalex', cadena: 'x', paginas: 2, porPagina: 3 });
+      .send({ fuente: 'ieee', cadena: 'x', paginas: 2, porPagina: 3, base: 'IEEE Xplore Digital Library' });
     assert.equal(r.status, 200);
     assert.deepEqual(rpcParams('fn_importar_estudios').p_estudios.map(e => e.titulo), ['A']);
     assert.equal(rpcParams('fn_importar_estudios').p_id_rev, 5);
+    assert.equal(rpcParams('fn_importar_estudios').p_fuente, 'ieee');
     assert.equal(r.body.recibidos, 3);
     assert.equal(r.body.importados, 1);
     assert.equal(r.body.duplicados, 2);
+    // Los importados quedan con el nombre de la base de Planificación (lo que cuenta el PRISMA)
+    assert.equal(rpcParams('fn_importar_estudios').p_estudios[0].fuente_bibliografica, 'IEEE Xplore Digital Library');
+    const cambio = deTabla('estudios', 'update').at(-1);
+    assert.ok(cambio, 'actualiza el nombre de la base');
+    assert.deepEqual(h.paso(cambio, 'update')[1], [{ fuente_bibliografica: 'IEEE Xplore Digital Library' }]);
+    assert.deepEqual(cambio.filter(x => x[0] === 'eq').map(x => x[1]), [['id_detalles_revision', 5], ['origen', 'ieee']]);
+  });
+
+  test('sin base de Planificación, los importados llevan el nombre de la fuente', async () => {
+    paginasFuente = () => ({ items: [item('Nuevo', '10.9/n')], total: 1 });
+    responder = base({ estudios: () => ok([]), 'rpc:fn_importar_estudios': () => ok({ id_importacion: 1, importados: 1 }) });
+    const r = await request(app).post('/api/v1/revisiones/5/importar').set('Authorization', await sesion()).send({ fuente: 'springer', cadena: 'x' });
+    assert.equal(r.status, 200);
+    assert.equal(rpcParams('fn_importar_estudios').p_estudios[0].fuente_bibliografica, 'Springer Nature');
+  });
+
+  test('las fuentes antiguas (OpenAlex, Semantic Scholar, CrossRef) ya no se aceptan', async () => {
+    responder = base({});
+    for (const fuente of ['openalex', 'semantic_scholar', 'crossref']) {
+      const r = await request(app).post('/api/v1/revisiones/5/importar/buscar').set('Authorization', await sesion()).send({ fuente, cadena: 'x' });
+      assert.equal(r.status, 400, fuente);
+    }
+    assert.equal(llamadasFuentes.length, 0);
+  });
+
+  test('clave rechazada por la base → 503 con un mensaje que dice qué revisar', async () => {
+    paginasFuente = () => { const e = new Error('Developer Inactive'); e.response = { status: 403 }; throw e; };
+    responder = base({ estudios: () => ok([]) });
+    const r = await request(app).post('/api/v1/revisiones/5/importar/buscar').set('Authorization', await sesion()).send({ fuente: 'ieee', cadena: 'x' });
+    assert.equal(r.status, 503);
+    assert.match(r.body.error?.message || r.body.message || JSON.stringify(r.body), /IEEE Xplore rechazó la consulta/);
   });
 
   test('un lector no puede importar', async () => {
     responder = base({}, { escribe: false });
-    const r = await request(app).post('/api/v1/revisiones/5/importar').set('Authorization', await sesion()).send({ fuente: 'crossref', cadena: 'x' });
+    const r = await request(app).post('/api/v1/revisiones/5/importar').set('Authorization', await sesion()).send({ fuente: 'springer', cadena: 'x' });
     assert.equal(r.status, 403);
     assert.equal(llamadasFuentes.length, 0);
   });

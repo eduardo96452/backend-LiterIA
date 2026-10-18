@@ -62,7 +62,7 @@ async function texto(c, { keywords: kw }) {
     '',
     'PROPÓSITO: situar la revisión frente a la literatura previa y justificar por qué hace falta: qué se ha estudiado, cómo, qué se concluyó y qué queda sin cubrir respecto al objetivo y a las preguntas de ESTA revisión.',
     '',
-    'ESTRUCTURA (4 a 6 párrafos, entre 450 y 700 palabras):',
+    'ESTRUCTURA (4 a 7 párrafos, entre 500 y 1000 palabras; la extensión depende de cuántas fuentes haya que comparar):',
     '1. Panorama: cómo se ha abordado el tema en la literatura, con las fuentes más generales.',
     '2-4. Agrupa las fuentes por temas o enfoques (no un párrafo por fuente). En cada grupo compara qué analizaron, con qué alcance (población, contexto, periodo o tipo de estudios, cuando el resumen lo indique) y qué concluyeron; señala coincidencias y diferencias. Si una fuente es una revisión, dilo.',
     '5. Vacío: explica con precisión qué no cubren estos trabajos en relación con el objetivo y las preguntas de esta revisión (periodo, población, contexto, tipo de intervención o enfoque metodológico) y cómo esta revisión lo aborda. No adelantes resultados.',
@@ -81,7 +81,7 @@ async function texto(c, { keywords: kw }) {
     'Devuelve: { "trabajos_relacionados": "<párrafos separados por una línea en blanco>" }'
   ].join('\n');
 
-  const r = await C.pedirJson(c.idioma, instrucciones, { maxTokens: 5000, indicaciones: c.indicaciones });
+  const r = await C.pedirJson(c.idioma, instrucciones, { maxTokens: 6500, indicaciones: c.indicaciones });
   const acumulado = { usadas: new Set(), quitadas: new Set() };
   const provisional = validarEnValor(C.texto(r.trabajos_relacionados), permitidas, acumulado);
   const fin = await E.finalizar(c, f, acumulado.usadas);

@@ -11,7 +11,7 @@
 //   DELETE /estudios/:e/pdf                          (204)
 //   GET    /calidad                                  preguntas, respuestas, umbral y evaluaciones
 //   PUT    /estudios/:e/calidad     {respuestas:[…]} guarda la evaluación completa del estudio
-//   POST   /importar/buscar                          OpenAlex / Semantic Scholar / CrossRef (vista previa)
+//   POST   /importar/buscar                          IEEE Xplore / Springer Nature (vista previa)
 //   POST   /importar                                 importa N páginas (límite costoso)
 //   POST   /cribado/sugerir                          sugerencias de la IA (límite costoso)
 //   GET    /cribado/mio                              cribado independiente: mis decisiones

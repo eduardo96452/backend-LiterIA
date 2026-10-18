@@ -283,6 +283,30 @@ describe('bases bibliográficas y cadenas', () => {
 
 // ---------- Criterios ----------
 describe('criterios', () => {
+  test('crear, cambiar o borrar un criterio reinicia la clasificación (sql/013) y lo dice en la respuesta', async () => {
+    responder = base({
+      criterios: p => ok(h.paso(p, 'insert') || h.paso(p, 'update') ? { id_criterios: 4, descripcion: 'X', tipo: 'exclusion' } : (h.paso(p, 'delete') ? [{ id_criterios: 4 }] : [])),
+      'rpc:fn_reiniciar_cribado': () => ok({ estudios: 12, sugerencias: 7, decisiones: 3 })
+    });
+    const r = await pide('post', '/criterios', { descripcion: 'X', tipo: 'exclusion' });
+    assert.equal(r.status, 201);
+    assert.deepEqual(r.body.reinicio, { estudios: 12, sugerencias: 7, decisiones: 3 });
+    assert.deepEqual(rpcParams('fn_reiniciar_cribado'), { p_id_rev: 5 });
+    assert.deepEqual((await pide('patch', '/criterios/4', { descripcion: 'Y' })).body.reinicio, { estudios: 12, sugerencias: 7, decisiones: 3 });
+    assert.equal((await pide('delete', '/criterios/4')).status, 204);
+    assert.equal(consultas.filter(p => esRpc(p, 'fn_reiniciar_cribado')).length, 3);
+  });
+
+  test('sin sql/013 el criterio se guarda igual (reinicio: null)', async () => {
+    responder = base({
+      criterios: p => ok({ id_criterios: 4, descripcion: 'X', tipo: 'exclusion' }),
+      'rpc:fn_reiniciar_cribado': () => ({ data: null, error: { code: 'PGRST202', message: 'Could not find the function public.fn_reiniciar_cribado(p_id_rev)' } })
+    });
+    const r = await pide('post', '/criterios', { descripcion: 'X', tipo: 'exclusion' });
+    assert.equal(r.status, 201);
+    assert.equal(r.body.reinicio, null);
+  });
+
   test('POST valida el tipo; PATCH solo cambia la descripción', async () => {
     responder = base({ criterios: p => ok(h.paso(p, 'insert') || h.paso(p, 'update') ? { id_criterios: 4, descripcion: 'X', tipo: 'exclusion' } : []) });
     assert.equal((await pide('post', '/criterios', { descripcion: 'X', tipo: 'excluido' })).status, 400);

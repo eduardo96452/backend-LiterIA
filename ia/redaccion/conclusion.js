@@ -21,7 +21,7 @@ async function texto(c) {
   const instrucciones = [
     `TAREA: redacta la sección «${NOMBRE}» del artículo de revisión sistemática.`,
     '',
-    'ESTRUCTURA (entre 400 y 650 palabras):',
+    'ESTRUCTURA (entre 400 y 800 palabras):',
     `1. Un párrafo que retome el objetivo y diga qué se hizo: revisión sistemática según PRISMA 2020 con ${p ? `${p.incluidos} estudios incluidos` : 'los estudios incluidos'}${pan?.desde ? ` publicados entre ${pan.desde} y ${pan.hasta}` : ''}.`,
     `2. Un párrafo por pregunta de investigación (${preguntas.map(x => x.codigo).join(', ')}) que empiece respondiéndola de forma directa («Respecto a ${preguntas[0].codigo}, …») con los hallazgos principales.`,
     '3. Un párrafo con la contribución de la revisión y sus implicaciones principales.',

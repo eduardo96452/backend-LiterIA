@@ -1,7 +1,7 @@
 // core/auth.js
 // authJwt          → SIEMPRE exige el JWT de Supabase (Authorization: Bearer <access_token>). Lo usa /api/v1.
 // auth             → rutas /api antiguas: depende de AUTH_MODE (jwt | apikey, modo de compatibilidad).
-// Ambos dejan req.user = { id, email, rol } (o null con apikey) y req.token.
+// Ambos dejan req.user = { id, email, rol, amr, sesion } (o null con apikey) y req.token.
 //
 // Códigos de respuesta:
 //   401 → falta el token, o es inválido o caducó: el frontend debe cerrar la sesión.
@@ -58,7 +58,10 @@ async function autenticarConJwt(req, token) {
     email: payload.email,
     // Nombre del registro (user_metadata.name): solo para saludar en los correos
     nombre: String(payload.user_metadata?.name || payload.user_metadata?.full_name || '').trim() || null,
-    rol: payload.app_metadata?.rol || 'usuario'
+    rol: payload.app_metadata?.rol || 'usuario',
+    // Cómo se abrió la sesión (contraseña, enlace de recuperación…) y cuándo: lo usa el cambio de contraseña
+    amr: Array.isArray(payload.amr) ? payload.amr : [],
+    sesion: payload.session_id || null
   };
   const ctx = getContext(); if (ctx) ctx.userId = payload.sub;
 }

@@ -3,9 +3,11 @@
 const env = require('./config/env');
 const logger = require('./core/logger');
 const app = require('./app');
+const correoAvisos = require('./modules/notificaciones/correo');
 
 const server = app.listen(env.PORT, () => {
   logger.info('server_started', { port: env.PORT, env: env.NODE_ENV, auth: env.AUTH_MODE, mail: env.mailEnabled, admin: env.adminEnabled });
+  correoAvisos.programar();   // correos de los avisos (sql/012)
 });
 
 // Tiempos máximos por conexión (las generaciones largas no deben colgar el servidor indefinidamente)

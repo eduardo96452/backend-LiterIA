@@ -199,7 +199,7 @@ const adminActivo = z.object({ activo: z.boolean() });
 const adminRol = z.object({ rol: z.enum(['admin', 'usuario']), codigo: z.string().trim().max(10).optional() });
 
 const importarBase = {
-  fuente: z.enum(['openalex', 'semantic_scholar', 'crossref']),
+  fuente: z.enum(['ieee', 'springer'], { errorMap: () => ({ message: 'Base no disponible: elige IEEE Xplore o Springer Nature.' }) }),
   cadena: str(2000),
   anioDesde: z.coerce.number().int().min(1900).max(2100).optional(),
   anioHasta: z.coerce.number().int().min(1900).max(2100).optional(),

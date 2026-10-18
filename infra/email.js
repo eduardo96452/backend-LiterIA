@@ -121,4 +121,40 @@ async function sendAdminCodeMail({ to, codigo, destinatario, minutos }) {
   });
 }
 
-module.exports = { sendContactMail, sendInvitationMail, sendNewSessionMail, sendAdminCodeMail };
+/** ¿Se pueden enviar correos de avisos? (basta la cuenta de Gmail; el contacto necesita además CONTACT_TO) */
+const correoDisponible = () => Boolean(env.GMAIL_USER && env.GMAIL_PASS);
+
+let transporterAvisos = null;
+function getTransporterAvisos() {
+  if (!correoDisponible()) throw new HttpError(503, 'El correo no está configurado.');
+  if (!transporterAvisos) {
+    transporterAvisos = transporter || nodemailer.createTransport({
+      service: 'gmail',
+      auth: { user: env.GMAIL_USER, pass: env.GMAIL_PASS },
+      pool: true,
+      maxConnections: 2
+    });
+  }
+  return transporterAvisos;
+}
+
+/** Un aviso de la campana enviado por correo (invitaciones, conflictos, fases, recordatorios…). */
+async function sendNotificationMail({ to, nombre, titulo, cuerpo, revision, enlace, preferencias }) {
+  const t = getTransporterAvisos();
+  await enviar(t, {
+    to, subject: titulo,
+    contenido: correo({
+      asunto: titulo,
+      resumen: cuerpo || revision || 'Aviso de LiterIA',
+      titulo,
+      saludo: nombre ? `Hola, ${nombre}:` : 'Hola:',
+      parrafos: cuerpo ? [cuerpo] : [],
+      detalles: revision ? [['Revisión', revision]] : [],
+      boton: enlace ? { texto: 'Abrir en LiterIA', url: enlace } : undefined,
+      pie: 'Lo recibes porque tienes activados estos avisos por correo en LiterIA.' +
+           (preferencias ? ` Puedes cambiarlo en Preferencias de notificación: ${preferencias}` : '')
+    })
+  });
+}
+
+module.exports = { sendContactMail, sendInvitationMail, sendNewSessionMail, sendAdminCodeMail, sendNotificationMail, correoDisponible };

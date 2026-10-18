@@ -10,6 +10,7 @@ const routes = require('./routes');
 const { notFound, errorHandler } = require('./core/errorHandler');
 const { requestContext } = require('./core/requestContext');
 const { HttpError } = require('./core/httpError');
+const correoAvisos = require('./modules/notificaciones/correo');
 
 const app = express();
 
@@ -45,6 +46,9 @@ app.use((req, res, next) => {
   });
   next();
 });
+
+// Los avisos nacen de las acciones que escriben: después de cada una se envían los correos pendientes
+app.use(correoAvisos.trasEscritura);
 
 app.use(routes);
 

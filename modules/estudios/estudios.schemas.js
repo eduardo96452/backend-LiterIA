@@ -79,9 +79,10 @@ const calidad = z.object({
     .min(1, 'Responde al menos una pregunta.').max(100)
 }).strict();
 
-/* ---------- Importación desde OpenAlex / Semantic Scholar / CrossRef ---------- */
-const importarBuscar = legacy.importarBuscar;
-const importar = legacy.importarBuscar.extend({ paginas: z.coerce.number().int().min(1).max(10).default(1) });
+/* ---------- Importación desde IEEE Xplore / Springer Nature ---------- */
+// base: nombre de la base en Planificación (los importados quedan con ese nombre en el PRISMA)
+const importarBuscar = legacy.importarBuscar.extend({ base: z.string().trim().max(200).optional() });
+const importar = importarBuscar.extend({ paginas: z.coerce.number().int().min(1).max(10).default(1) });
 
 /* ---------- Cribado ---------- */
 const sugerir = z.object({
