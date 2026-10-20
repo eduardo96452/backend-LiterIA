@@ -9,9 +9,12 @@ const limites = require('./core/rateLimit');
 const { authJwt } = require('./core/auth');
 const { notFound } = require('./core/errorHandler');
 const equipo = require('./modules/equipo/equipo.routes');
+const { soloEquipo } = require('./core/accesoRevision');
 
 const v1 = express.Router();
 v1.use(authJwt, limites.usuario);                       // todo /api/v1 exige sesión
+// Una revisión solo la abre su equipo (también los administradores): core/accesoRevision.js
+v1.use('/revisiones/:id', soloEquipo);
 v1.use('/revisiones', require('./modules/revisiones/revisiones.routes'));
 v1.use('/revisiones/:id', require('./modules/informes/informes.routes'));     // secciones, IA, PRISMA, Word
 v1.use('/revisiones/:id', require('./modules/estudios/estudios.routes'));     // estudios, PDF, calidad, importar, cribado
