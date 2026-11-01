@@ -32,7 +32,7 @@ const ROLES = {
 /** «Ana Pérez (ana@uni.edu)» si hay nombre; si no, solo el correo. */
 const quien = (nombre, correo) => (nombre ? `${nombre} (${correo})` : correo) || 'Un colega';
 
-async function enviar(t, { to, subject, replyTo, contenido, remitente = 'LiterIA' }) {
+async function enviar(t, { to, subject, replyTo, contenido, remitente = env.APP_NOMBRE }) {
   await t.sendMail({
     from: `"${stripHeaderChars(remitente)}" <${env.GMAIL_USER}>`,   // remitente fijo: el usuario NO controla "from"
     to,
@@ -48,7 +48,7 @@ async function sendContactMail({ name, email, message }) {
   const t = getTransporter();
   const subject = `Nuevo mensaje de contacto de ${name}`;
   await enviar(t, {
-    to: env.CONTACT_TO, replyTo: email, subject, remitente: 'Contacto LiterIA',
+    to: env.CONTACT_TO, replyTo: email, subject, remitente: `Contacto ${env.APP_NOMBRE}`,
     contenido: correo({
       asunto: subject,
       resumen: String(message).slice(0, 120),
@@ -56,7 +56,7 @@ async function sendContactMail({ name, email, message }) {
       detalles: [['Nombre', name], ['Correo', email]],
       destacado: message,
       parrafos: ['Responde a este correo para contestar directamente a la persona.'],
-      pie: 'Lo recibes porque es la dirección de contacto configurada en LiterIA.'
+      pie: `Lo recibes porque es la dirección de contacto configurada en ${env.APP_NOMBRE}.`
     })
   });
 }
@@ -69,7 +69,7 @@ async function sendInvitationMail({ to, invitadoPor, nombreInvitador, tituloRevi
     to, subject,
     contenido: correo({
       asunto: subject,
-      resumen: `Te invitaron como ${rol} en una revisión sistemática de LiterIA.`,
+      resumen: `Te invitaron como ${rol} en una revisión sistemática de ${env.APP_NOMBRE}.`,
       titulo: 'Te invitaron a colaborar en una revisión',
       saludo: 'Hola:',
       parrafos: [`${quienInvita} te invitó a participar en esta revisión sistemática:`],
@@ -78,14 +78,14 @@ async function sendInvitationMail({ to, invitadoPor, nombreInvitador, tituloRevi
       boton: { texto: 'Aceptar la invitación', url: enlace },
       aviso: `Para aceptarla, inicia sesión (o crea tu cuenta) con este mismo correo: ${to}. ` +
              'Si no esperabas esta invitación, puedes ignorar el mensaje: no se creará nada.',
-      pie: `Lo recibes porque ${quienInvita} escribió tu dirección en LiterIA.`
+      pie: `Lo recibes porque ${quienInvita} escribió tu dirección en ${env.APP_NOMBRE}.`
     })
   });
 }
 
 async function sendNewSessionMail({ to, nombre, dispositivo, ip, fecha, enlaceSesiones }) {
   const t = getTransporter();
-  const subject = 'Nuevo inicio de sesión en tu cuenta de LiterIA';
+  const subject = `Nuevo inicio de sesión en tu cuenta de ${env.APP_NOMBRE}`;
   await enviar(t, {
     to, subject,
     contenido: correo({
@@ -93,7 +93,7 @@ async function sendNewSessionMail({ to, nombre, dispositivo, ip, fecha, enlaceSe
       resumen: `${dispositivo} · ${fecha}`,
       titulo: 'Nuevo inicio de sesión',
       saludo: nombre ? `Hola, ${nombre}:` : 'Hola:',
-      parrafos: ['Se acaba de iniciar sesión en tu cuenta de LiterIA.'],
+      parrafos: [`Se acaba de iniciar sesión en tu cuenta de ${env.APP_NOMBRE}.`],
       detalles: [['Dispositivo', dispositivo], ['Dirección IP', ip], ['Fecha', fecha]],
       boton: enlaceSesiones ? { texto: 'Revisar sesiones activas', url: enlaceSesiones } : undefined,
       aviso: 'Si fuiste tú, no tienes que hacer nada.\n' +
@@ -112,11 +112,11 @@ async function sendAdminCodeMail({ to, codigo, destinatario, minutos }) {
       asunto: subject,
       resumen: `Caduca en ${minutos} minutos.`,
       titulo: 'Confirma el cambio de rol',
-      parrafos: [`Has pedido dar el rol de administrador a ${destinatario}. Escribe este código en LiterIA para confirmarlo:`],
+      parrafos: [`Has pedido dar el rol de administrador a ${destinatario}. Escribe este código en ${env.APP_NOMBRE} para confirmarlo:`],
       destacado: codigo,
       codigo: true,
       aviso: `El código caduca en ${minutos} minutos. Si no lo has pedido tú, no lo uses y revisa quién tiene acceso a tu cuenta.`,
-      pie: 'Lo recibes porque eres administrador de LiterIA.'
+      pie: `Lo recibes porque eres administrador de ${env.APP_NOMBRE}.`
     })
   });
 }
@@ -145,13 +145,13 @@ async function sendNotificationMail({ to, nombre, titulo, cuerpo, revision, enla
     to, subject: titulo,
     contenido: correo({
       asunto: titulo,
-      resumen: cuerpo || revision || 'Aviso de LiterIA',
+      resumen: cuerpo || revision || `Aviso de ${env.APP_NOMBRE}`,
       titulo,
       saludo: nombre ? `Hola, ${nombre}:` : 'Hola:',
       parrafos: cuerpo ? [cuerpo] : [],
       detalles: revision ? [['Revisión', revision]] : [],
-      boton: enlace ? { texto: 'Abrir en LiterIA', url: enlace } : undefined,
-      pie: 'Lo recibes porque tienes activados estos avisos por correo en LiterIA.' +
+      boton: enlace ? { texto: `Abrir en ${env.APP_NOMBRE}`, url: enlace } : undefined,
+      pie: `Lo recibes porque tienes activados estos avisos por correo en ${env.APP_NOMBRE}.` +
            (preferencias ? ` Puedes cambiarlo en Preferencias de notificación: ${preferencias}` : '')
     })
   });

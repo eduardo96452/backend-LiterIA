@@ -833,14 +833,110 @@ describe('cliente de Consensus (infra/consensus)', () => {
     try {
       consensus._http.get = async () => { throw error(401, { detail: 'invalid key' }); };
       await assert.rejects(consensus.buscar('a'), e => e.status === 502 && /CONSENSUS_API_KEY/.test(e.message));
+      consensus._reiniciar();   // la clave rechazada queda apartada unas horas: se empieza de cero
       consensus._http.get = async () => { throw error(429, { detail: 'You have used all included searches' }); };
       await assert.rejects(consensus.buscar('b'), e => e.status === 429 && /este mes/.test(e.message));
+      consensus._reiniciar();
       let n = 0;
       consensus._http.get = async () => { if (n++ === 0) throw error(429, { detail: 'Too many requests' }, { 'retry-after': '1' }); return { data: { results: [{ title: 'ok' }] } }; };
       const r = await consensus.buscar('c');
       assert.equal(r.results[0].title, 'ok');
       assert.equal(n, 2);
     } finally { restaurar(); }
+  });
+
+  // ---------- v3.13: varias claves, en orden ----------
+  const AGOTADA = () => error(429, { detail: 'You have used all included searches' });
+  /** Respuesta según la clave de la cabecera: `porClave[clave]` es una función que lanza o devuelve. */
+  const conClaves = porClave => {
+    consensus._http.get = async (url, opts) => {
+      const clave = opts.headers['x-api-key'];
+      peticiones.push({ clave, url });
+      return porClave[clave](url);
+    };
+  };
+  const bien = titulo => () => ({ data: { results: [{ title: titulo }] } });
+
+  test('varias claves: cuando una agota las búsquedas del mes, sigue con la siguiente y ya no usa la agotada', async () => {
+    try {
+      env.CONSENSUS_API_KEY = ' clave-uno-SECRETA , clave-dos-SECRETA,clave-tres-SECRETA ';
+      conClaves({ 'clave-uno-SECRETA': () => { throw AGOTADA(); }, 'clave-dos-SECRETA': bien('de la dos'), 'clave-tres-SECRETA': bien('de la tres') });
+      assert.equal((await consensus.buscar('primera')).results[0].title, 'de la dos');
+      assert.equal((await consensus.buscar('segunda')).results[0].title, 'de la dos');
+      assert.deepEqual(peticiones.map(p => p.clave), ['clave-uno-SECRETA', 'clave-dos-SECRETA', 'clave-dos-SECRETA']);
+
+      // Se agota también la segunda: pasa a la tercera
+      conClaves({ 'clave-dos-SECRETA': () => { throw AGOTADA(); }, 'clave-tres-SECRETA': bien('de la tres') });
+      assert.equal((await consensus.buscar('tercera')).results[0].title, 'de la tres');
+      assert.deepEqual(peticiones.slice(3).map(p => p.clave), ['clave-dos-SECRETA', 'clave-tres-SECRETA']);
+    } finally { restaurar(); }
+  });
+
+  test('una clave rechazada (401) o con la facturación pendiente (402) también cede el turno a la siguiente', async () => {
+    try {
+      env.CONSENSUS_API_KEY = 'a-SECRETA,b-SECRETA,c-SECRETA';
+      conClaves({ 'a-SECRETA': () => { throw error(401, { detail: 'invalid key' }); }, 'b-SECRETA': () => { throw error(402, { detail: 'billing' }); }, 'c-SECRETA': bien('c') });
+      assert.equal((await consensus.buscar('x')).results[0].title, 'c');
+      assert.deepEqual(peticiones.map(p => p.clave), ['a-SECRETA', 'b-SECRETA', 'c-SECRETA']);
+    } finally { restaurar(); }
+  });
+
+  test('si se agotan todas: 429 que lo dice (la redacción sigue con CrossRef) y no se gastan peticiones hasta que toque reintentar', async () => {
+    const original = consensus.ajustes.reintentoMs;
+    try {
+      env.CONSENSUS_API_KEY = 'a-SECRETA,b-SECRETA';
+      conClaves({ 'a-SECRETA': () => { throw AGOTADA(); }, 'b-SECRETA': () => { throw AGOTADA(); } });
+      await assert.rejects(consensus.buscar('x'), e => e.status === 429 && /en las 2 claves/.test(e.message));
+      await assert.rejects(consensus.buscar('y'), e => e.status === 429 && /en las 2 claves/.test(e.message));
+      assert.equal(peticiones.length, 2, 'la segunda búsqueda ni siquiera llama a Consensus');
+
+      // Mezcla de motivos: mensaje general
+      consensus._reiniciar(); peticiones.length = 0;
+      conClaves({ 'a-SECRETA': () => { throw error(401, {}); }, 'b-SECRETA': () => { throw AGOTADA(); } });
+      await assert.rejects(consensus.buscar('z'), e => e.status === 502 && /Ninguna de las 2 claves/.test(e.message));
+
+      // Pasado el tiempo de espera, vuelve a probar la primera (p. ej., se renovó el mes)
+      consensus._reiniciar(); peticiones.length = 0;
+      consensus.ajustes.reintentoMs = 30;
+      let renovada = false;
+      conClaves({ 'a-SECRETA': () => { if (!renovada) throw AGOTADA(); return bien('a de nuevo')(); }, 'b-SECRETA': bien('b') });
+      assert.equal((await consensus.buscar('uno')).results[0].title, 'b');
+      renovada = true;
+      await new Promise(r => setTimeout(r, 40));
+      assert.equal((await consensus.buscar('dos')).results[0].title, 'a de nuevo');
+    } finally { consensus.ajustes.reintentoMs = original; restaurar(); }
+  });
+
+  test('el texto completo se decide por clave: una clave sin él no impide pedirlo con otra', async () => {
+    try {
+      env.CONSENSUS_API_KEY = 'pago-SECRETA,gratis-SECRETA';
+      let pagoAgotada = true;
+      conClaves({
+        'pago-SECRETA': url => { if (pagoAgotada) throw AGOTADA(); return { data: { results: [{ title: url.includes('include_full_text_chunks') ? 'con texto' : 'sin texto' }] } }; },
+        'gratis-SECRETA': url => { if (url.includes('include_full_text_chunks')) throw error(403, { detail: { code: 'feature_not_allowed' } }); return bien('gratis')(); }
+      });
+      assert.equal((await consensus.buscar('uno')).results[0].title, 'gratis');
+      assert.deepEqual(peticiones.map(p => [p.clave, p.url.includes('include_full_text_chunks')]),
+        [['pago-SECRETA', true], ['gratis-SECRETA', true], ['gratis-SECRETA', false]]);
+      // La de pago vuelve (otro proceso, o pasadas las horas): sigue pidiendo el texto completo
+      consensus._reiniciar(); pagoAgotada = false;
+      assert.equal((await consensus.buscar('dos')).results[0].title, 'con texto');
+    } finally { restaurar(); }
+  });
+
+  test('el registro dice qué clave falló («1 de 2») pero nunca la clave', async () => {
+    const consolaLog = console.log, registro = [];
+    process.env.LOG_TEST = '1';
+    console.log = l => registro.push(String(l));
+    try {
+      env.CONSENSUS_API_KEY = 'a-SECRETA,b-SECRETA';
+      conClaves({ 'a-SECRETA': () => { throw AGOTADA(); }, 'b-SECRETA': bien('b') });
+      await consensus.buscar('x');
+      const todo = registro.join('\n');
+      assert.match(todo, /consensus_clave_apartada/);
+      assert.match(todo, /"clave":"1 de 2"/);
+      assert.doesNotMatch(todo, /SECRETA/);
+    } finally { console.log = consolaLog; delete process.env.LOG_TEST; restaurar(); }
   });
 });
 

@@ -33,6 +33,9 @@ const schema = z.object({
 
   ALLOWED_ORIGINS: z.string().default('http://localhost:4200'),
   FRONTEND_URL: z.string().url().default('http://localhost:4200'),
+  // Nombre de la aplicación en los correos y mensajes del servidor. En el frontend sale de
+  // src/marca.json: si cambias el nombre allí, pon el mismo aquí (variable APP_NOMBRE en Render).
+  APP_NOMBRE: z.string().trim().min(1).max(60).default('LiterIA'),
 
   // --- Límites de peticiones (ver core/rateLimit.js) ---
   // RATE_LIMIT_WINDOW_MS y RATE_LIMIT_MAX ya no se usan: el límite global de 60 cada 15 min
@@ -54,7 +57,8 @@ const schema = z.object({
     SPRINGER_API_KEY: z.string().optional().or(z.literal('')),   // dev.springernature.com (Meta API)
 
   // --- Consensus (fuentes de la redacción: Trabajos relacionados, Introducción y Discusión) ---
-  // Sin CONSENSUS_API_KEY se usa CrossRef con palabras clave, como antes.
+  // Sin CONSENSUS_API_KEY se usa CrossRef con palabras clave, como antes. Admite varias claves
+  // separadas por comas: se usan en orden y, cuando una agota sus búsquedas, se pasa a la siguiente.
   CONSENSUS_API_KEY: z.string().optional().or(z.literal('')),
   CONSENSUS_PAGE_SIZE: z.coerce.number().int().min(1).max(100).default(20),     // artículos por búsqueda (el plan gratuito admite 20)
   CONSENSUS_MAX_CONSULTAS: z.coerce.number().int().min(1).max(5).default(3),    // búsquedas por sección generada

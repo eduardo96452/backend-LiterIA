@@ -3,6 +3,7 @@
 // respetan Gmail, Outlook y los clientes móviles) y su versión en texto plano. Todo lo que llega
 // de fuera (nombres, títulos, mensajes) se escapa aquí.
 const path = require('path');
+const env = require('../config/env');
 
 /** Logo incrustado en el propio correo (no depende de que el cliente cargue imágenes remotas). */
 const LOGO = { filename: 'literia.png', path: path.join(__dirname, '..', 'assets', 'correo', 'literia.png'), cid: 'logo@literia' };
@@ -98,7 +99,7 @@ function correo(o) {
       <tr><td style="padding:0 4px 16px;">
         <table role="presentation" cellpadding="0" cellspacing="0"><tr>
           <td style="vertical-align:middle;"><img src="${o.logo ?? `cid:${LOGO.cid}`}" width="40" height="40" alt="" style="display:block;border-radius:8px;"></td>
-          <td style="vertical-align:middle;padding-left:10px;font:700 19px/1 ${FUENTE};color:${C.tinta};">LiterIA</td>
+          <td style="vertical-align:middle;padding-left:10px;font:700 19px/1 ${FUENTE};color:${C.tinta};">${escapar(env.APP_NOMBRE)}</td>
         </tr></table>
       </td></tr>
       <tr><td style="background:${C.tarjeta};border:1px solid ${C.borde};border-radius:10px;padding:28px 28px 20px;">
@@ -107,7 +108,7 @@ function correo(o) {
         ${parrafos}${destacado}${detalles}${boton}${aviso}
       </td></tr>
       <tr><td style="padding:16px 8px 0;font:12px/1.55 ${FUENTE};color:${C.suave};text-align:center;">
-        ${o.pie ? `${escapar(o.pie)}<br>` : ''}LiterIA · Revisiones sistemáticas de la literatura asistidas por IA
+        ${o.pie ? `${escapar(o.pie)}<br>` : ''}${escapar(env.APP_NOMBRE)} · Revisiones sistemáticas de la literatura asistidas por IA
       </td></tr>
     </table>
   </td></tr>
@@ -126,7 +127,7 @@ function correo(o) {
     '',
     '—',
     o.pie,
-    'LiterIA · Revisiones sistemáticas de la literatura asistidas por IA'
+    `${env.APP_NOMBRE} · Revisiones sistemáticas de la literatura asistidas por IA`
   ].filter(l => l !== undefined && l !== null).join('\n').replace(/\n{3,}/g, '\n\n');
 
   return { html, text };

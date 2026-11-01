@@ -268,7 +268,7 @@ async function eliminarCuenta(ctx, { confirmacion }) {
     throw new HttpError(400, 'Escribe el correo de tu cuenta para confirmar.');
   }
   if (ctx.user?.rol === 'admin' && !(await hayOtroAdmin(ctx.user.id))) {
-    throw new HttpError(409, 'Eres el único administrador de LiterIA: da el rol de administrador a otra persona antes de eliminar tu cuenta.');
+    throw new HttpError(409, `Eres el único administrador de ${env.APP_NOMBRE}: da el rol de administrador a otra persona antes de eliminar tu cuenta.`);
   }
 
   // Revisiones propias, una a una (así se borran también sus PDF e informes del almacenamiento)
