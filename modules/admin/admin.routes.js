@@ -1,14 +1,17 @@
 // modules/admin/admin.routes.js — panel de administración (/api/v1/admin). Exige rol admin en el token.
 //
-//   GET    /resumen                         GET /usuarios?q&page&size        GET /uso?desde&hasta
+//   GET    /resumen (con los servicios configurados)   GET /usuarios?q&page&size&filtro   GET /uso?desde&hasta
 //   PATCH  /usuarios/:uid/activo {activo}   bloquea o desbloquea el inicio de sesión
 //   POST   /usuarios/:uid/rol/codigo        paso 1 para promover: código al correo del admin (límite «correo»)
 //   PATCH  /usuarios/:uid/rol {rol, codigo?}
-//   GET    /revisiones?q&page&size&id_usuarios   todas las revisiones con su propietario
+//   GET    /revisiones?q&page&size&id_usuarios&tipo   todas las revisiones con su propietario, equipo y estudios
+//   GET    /consensus                       lo usado, lo que queda y el gasto de cada clave este mes
+//   PUT    /consensus/claves/:huella {plan, nombre, uso_adicional, costo_mensual, sync_usadas?, reactivar?}
 //   GET, POST /catalogos/metodologias       PUT, DELETE /catalogos/metodologias/:cid
 //   GET, POST /catalogos/componentes        PUT, DELETE /catalogos/componentes/:cid   (?id_metodologia=)
 //   GET    /catalogos/componentes/sigla?nombre&id_metodologia   sigla propuesta
 //   GET, POST /catalogos/plantillas         PUT, DELETE /catalogos/plantillas/:cid
+//   GET    /catalogos/usos                  en cuántas revisiones se usa cada marco y cada formato
 const express = require('express');
 const limites = require('../../core/rateLimit');
 const { requireAdmin } = require('../../core/auth');
@@ -40,9 +43,14 @@ router.patch('/usuarios/:uid/rol', conUsuario, validate(S.rol),
 
 router.get('/revisiones', validate(S.revisiones, 'query'), h(async (req, res) => res.json(await svc.revisiones(c(req), Q(req)))));
 
+router.get('/consensus', h(async (req, res) => res.json(await svc.consensus(c(req)))));
+router.put('/consensus/claves/:huella', validate(S.huellaConsensus, 'params'), validate(S.consensusClave),
+  h(async (req, res) => res.json(await svc.guardarConsensus(c(req), req.valid.params.huella, req.body))));
+
 /* ---------- Catálogos ---------- */
 const cat = express.Router();
 
+cat.get('/usos', h(async (req, res) => res.json(await svc.usoCatalogos(c(req)))));
 cat.get('/metodologias', h(async (req, res) => res.json(await svc.listarMetodologias(c(req)))));
 cat.post('/metodologias', validate(S.metodologia), h(async (req, res) => res.status(201).json(await svc.guardarMetodologia(c(req), null, req.body))));
 cat.put('/metodologias/:cid', conId, validate(S.metodologia), h(async (req, res) => res.json(await svc.guardarMetodologia(c(req), cid(req), req.body))));

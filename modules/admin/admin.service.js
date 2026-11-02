@@ -9,6 +9,8 @@ const env = require('../../config/env');
 const logger = require('../../core/logger');
 const sb = require('../../infra/supabase');
 const email = require('../../infra/email');
+const consensusCli = require('../../infra/consensus');
+const { resumirConsensus, limites } = require('./consensus.resumen');
 const { HttpError } = require('../../core/httpError');
 
 const cliente = ctx => sb.forUser(ctx.token);
@@ -19,15 +21,52 @@ function datos({ data, error, count }) {
 
 /* ---------- Resumen, usuarios y uso ---------- */
 
-function resumen(ctx) {
-  return sb.rpc(cliente(ctx), 'fn_admin_resumen');
+/** Cifras de la plataforma y qué servicios externos están configurados (sin ningún secreto). */
+async function resumen(ctx) {
+  const r = await sb.rpc(cliente(ctx), 'fn_admin_resumen');
+  return {
+    ...(r || {}),
+    servicios: {
+      openai: Boolean(env.OPENAI_API_KEY),
+      correo: Boolean(env.mailEnabled),
+      consensus: consensusCli.estadoClaves().length
+    }
+  };
 }
 
-async function usuarios(ctx, { q = '', page = 1, size = 25 }) {
-  const filas = await sb.rpc(cliente(ctx), 'fn_admin_usuarios', {
-    q: String(q).slice(0, 100), p_page: Number(page) || 1, p_size: Math.min(Number(size) || 25, 100)
-  });
-  return { usuarios: filas || [], total: filas?.[0]?.total ?? 0, page: Number(page) || 1 };
+const FILTROS_USUARIOS = {
+  todas: () => true,
+  activas: u => u.activo !== false,
+  desactivadas: u => u.activo === false,
+  admins: u => u.rol === 'admin'
+};
+
+/**
+ * Página de usuarios con su foto y cuántas cuentas hay en cada filtro (sql/016). Sin ese script,
+ * la función de antes (sin filtro): se filtra la página que llega y no hay conteos.
+ */
+async function usuarios(ctx, { q = '', page = 1, size = 25, filtro = 'todas' }) {
+  const pagina = Number(page) || 1;
+  const base = { q: String(q).slice(0, 100), p_page: pagina, p_size: Math.min(Number(size) || 25, 100) };
+  let filas, conFiltro = true;
+  try {
+    filas = await sb.rpc(cliente(ctx), 'fn_admin_usuarios', { ...base, p_filtro: filtro });
+  } catch (e) {
+    if (e.status !== 501) throw e;
+    conFiltro = false;
+    filas = (await sb.rpc(cliente(ctx), 'fn_admin_usuarios', base) || []).filter(FILTROS_USUARIOS[filtro] || FILTROS_USUARIOS.todas);
+  }
+  filas = filas || [];
+  const primera = filas[0];
+  const conteos = conFiltro && primera && primera.n_todas !== undefined
+    ? { todas: Number(primera.n_todas), activas: Number(primera.n_activas), desactivadas: Number(primera.n_desactivadas), admins: Number(primera.n_admins) }
+    : null;
+  return {
+    usuarios: filas.map(({ n_todas: _a, n_activas: _b, n_desactivadas: _c, n_admins: _d, ...u }) => u),
+    total: conFiltro ? Number(primera?.total ?? 0) : filas.length,
+    page: pagina,
+    conteos
+  };
 }
 
 function uso(ctx, { desde, hasta }) {
@@ -105,15 +144,28 @@ async function setRol(ctx, id, { rol, codigo }) {
  * Página de revisiones con su propietario. El propietario se pide aparte: entre detalles_revision y
  * usuarios hay dos caminos (el dueño y colaboradores_revision) y el embebido de PostgREST falla.
  */
-async function revisiones(ctx, { q = '', page = 1, size = 20, id_usuarios }) {
+async function revisiones(ctx, { q = '', page = 1, size = 20, id_usuarios, tipo }) {
+  const texto = String(q).trim().replace(/[%_\\]/g, m => `\\${m}`);   // comodines como texto literal
+  try {
+    const r = await sb.rpc(cliente(ctx), 'fn_admin_revisiones', {
+      q: texto, p_page: page, p_size: size, p_id_usuarios: id_usuarios ?? null, p_tipo: tipo || null
+    });
+    return { revisiones: r?.revisiones || [], total: Number(r?.total ?? 0), page, tipos: r?.tipos || [] };
+  } catch (e) {
+    if (e.status !== 501) throw e;   // sin sql/016: la consulta de antes (sin equipo ni estudios)
+  }
+  return revisionesSinConteos(ctx, { texto, page, size, id_usuarios, tipo });
+}
+
+async function revisionesSinConteos(ctx, { texto, page, size, id_usuarios, tipo }) {
   const desde = (page - 1) * size;
   let consulta = cliente(ctx).from('detalles_revision')
     .select('id_detalles_revision, titulo_revision, tipo_revision, fecha_creacion, fecha_modificacion, id_usuarios', { count: 'exact' })
     .order('fecha_creacion', { ascending: false })
     .range(desde, desde + size - 1);
-  const texto = String(q).trim().replace(/[%_\\]/g, m => `\\${m}`);   // comodines como texto literal
   if (texto) consulta = consulta.ilike('titulo_revision', `%${texto}%`);
   if (id_usuarios) consulta = consulta.eq('id_usuarios', id_usuarios);
+  if (tipo) consulta = consulta.eq('tipo_revision', tipo);
   const { data, count } = datos(await consulta);
   const filas = data || [];
 
@@ -124,7 +176,57 @@ async function revisiones(ctx, { q = '', page = 1, size = 20, id_usuarios }) {
       .select('id_usuarios, nombre_usuario, correo_electronico').in('id_usuarios', ids));
     for (const u of duenos || []) porId.set(u.id_usuarios, { nombre_usuario: u.nombre_usuario, correo_electronico: u.correo_electronico });
   }
-  return { revisiones: filas.map(r => ({ ...r, usuarios: porId.get(r.id_usuarios) ?? null })), total: count ?? 0, page };
+  return { revisiones: filas.map(r => ({ ...r, usuarios: porId.get(r.id_usuarios) ?? null })), total: count ?? 0, page, tipos: [] };
+}
+
+/** En cuántas revisiones se usa cada marco y cada formato (sql/016). Sin el script, vacío. */
+async function usoCatalogos(ctx) {
+  try {
+    return await sb.rpc(cliente(ctx), 'fn_admin_uso_catalogos') || { metodologias: {}, plantillas: {} };
+  } catch (e) {
+    if (e.status !== 501) throw e;
+    return { metodologias: {}, plantillas: {} };
+  }
+}
+
+/* ---------- Consensus: lo que queda y lo que cuesta cada clave ----------
+ * Su API no informa del saldo: lo cuenta LiterIA (consensus_uso) y se junta con lo que el servidor
+ * sabe en memoria de cada clave. La base solo recibe huellas; las claves no salen del servidor.
+ */
+async function consensus(ctx, ahora = new Date()) {
+  const estados = consensusCli.estadoClaves();
+  let datos = null, sinRegistro = false;
+  if (estados.length) {
+    try {
+      datos = await sb.rpc(cliente(ctx), 'fn_admin_consensus', { p_claves: estados.map(e => e.huella) });
+    } catch (e) {
+      if (e.status !== 501) throw e;
+      sinRegistro = true;   // falta sql/016: se muestra lo que hay en memoria
+    }
+  }
+  return resumirConsensus(estados, datos, ahora, sinRegistro, { consultasPorSeccion: env.CONSENSUS_MAX_CONSULTAS });
+}
+
+/** Plan, nombre y gasto fijo de una clave; opcionalmente, lo usado según el panel de Consensus. */
+async function guardarConsensus(ctx, huella, cuerpo) {
+  if (!consensusCli.estadoClaves().some(e => e.huella === huella)) {
+    throw new HttpError(404, 'Esa clave ya no está configurada en el servidor (CONSENSUS_API_KEY).');
+  }
+  const { incluidas, maximo, usoAdicional } = limites(cuerpo.plan, cuerpo);
+  await sb.rpc(cliente(ctx), 'fn_admin_guardar_consensus_clave', {
+    p_clave: huella,
+    p_nombre: cuerpo.nombre,
+    p_plan: cuerpo.plan,
+    p_incluidas: incluidas,
+    p_maximo: maximo,
+    p_uso_adicional: usoAdicional,
+    p_costo_mensual: cuerpo.costo_mensual,
+    p_sync_usadas: cuerpo.sync_usadas ?? null,
+    p_reactivar: cuerpo.reactivar
+  });
+  if (cuerpo.reactivar) consensusCli.reactivar(huella);
+  logger.info('consensus_clave_guardada', { plan: cuerpo.plan, sincronizada: cuerpo.sync_usadas != null, reactivada: cuerpo.reactivar });
+  return consensus(ctx);
 }
 
 /* ---------- Catálogos: frameworks, sus componentes y formatos de cita ---------- */
@@ -183,6 +285,7 @@ const borrarPlantilla = (ctx, id) => sb.rpc(cliente(ctx), 'fn_admin_borrar_plant
 
 module.exports = {
   resumen, usuarios, uso, setActivo, pedirCodigoRol, setRol, revisiones, enmascarar, CODIGOS,
+  consensus, guardarConsensus, usoCatalogos,
   listarMetodologias, guardarMetodologia, borrarMetodologia,
   listarComponentes, guardarComponente, borrarComponente, siglaSugerida,
   listarPlantillas, guardarPlantilla, borrarPlantilla

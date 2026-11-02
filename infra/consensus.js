@@ -10,10 +10,14 @@
 // - Límite de la API: 1 petición por segundo. Aquí las peticiones se ponen en fila.
 // - Cada búsqueda gasta llamadas del plan (1 por cada 100 artículos devueltos): las respuestas se
 //   guardan en memoria unas horas para no repetir la misma búsqueda al regenerar una sección.
+// - La API no dice cuántas búsquedas quedan: cada una se apunta en consensus_uso (infra/consensusUso)
+//   y el panel de administración lo resume por clave. Una clave que Consensus dio por agotada este
+//   mes se recuerda en la base, así que tras un reinicio no se vuelve a probar hasta pasadas las horas.
 const axios = require('axios');
 const env = require('../config/env');
 const logger = require('../core/logger');
 const { HttpError } = require('../core/httpError');
+const uso = require('./consensusUso');
 
 const BASE = 'https://api.consensus.app';
 /**
@@ -30,6 +34,8 @@ let fila = Promise.resolve();
 let ultima = 0;
 /** Formato de study_types que acepta la API: repetido (study_types=a&study_types=b) o separado por comas. */
 let tiposSeparadosPorComas = false;
+/** Lo guardado en la base (claves agotadas este mes) se lee una vez, en la primera búsqueda. */
+let guardadoCargado = null;
 /**
  * Estado de cada clave, en memoria (se reinicia al reiniciar el servidor):
  *   hasta            hasta cuándo no se usa (agotada o rechazada)
@@ -50,6 +56,23 @@ const claveDisponible = () => claves().find(k => estado(k).hasta <= Date.now()) 
 const cual = clave => `${claves().indexOf(clave) + 1} de ${claves().length}`;
 
 const activo = () => claves().length > 0;
+
+/** Al arrancar, las claves que Consensus ya dio por agotadas este mes se apartan como si acabara de decirlo. */
+function cargarGuardado() {
+  if (!guardadoCargado) {
+    const lista = claves();
+    guardadoCargado = uso.agotadasEsteMes(lista).then(agotadas => {
+      for (const k of lista) {
+        const st = estado(k);
+        if (agotadas.has(uso.huella(k)) && st.hasta <= Date.now()) {
+          st.hasta = Date.now() + ajustes.reintentoMs;
+          st.motivo = { status: 429, msg: 'You have used all included searches' };
+        }
+      }
+    }).catch(() => {});
+  }
+  return guardadoCargado;
+}
 const textoCompletoPedido = () => Boolean(env.CONSENSUS_TEXTO_COMPLETO);
 const espera = ms => new Promise(r => setTimeout(r, env.NODE_ENV === 'test' ? Math.min(ms, 20) : ms));
 
@@ -114,7 +137,11 @@ async function buscar(query, filtros = {}) {
 
   const clave = JSON.stringify(Object.entries(params).sort());
   const hit = cache.get(clave);
-  if (hit && hit.exp > Date.now()) return hit.valor;
+  if (hit && hit.exp > Date.now()) {
+    uso.registrarBusqueda({ desdeCache: true, resultados: hit.valor.results.length });
+    return hit.valor;
+  }
+  await cargarGuardado();
 
   const valor = await enFila(() => pedir(params));
   if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value);
@@ -130,15 +157,19 @@ async function pedir(params, intento = 0, clave = claveDisponible()) {
     const { include_full_text_chunks: _quitado, ...resto } = p;
     p = resto;
   }
+  const t0 = Date.now();
   try {
     const { data } = await http.get(`/v1/search?${queryString(p)}`, {
       headers: { 'x-api-key': clave, Accept: 'application/json' }
     });
-    return { results: Array.isArray(data?.results) ? data.results : [], page_size: data?.page_size ?? null, consulta: p.query };
+    const results = Array.isArray(data?.results) ? data.results : [];
+    uso.registrarBusqueda({ clave, resultados: results.length, estado: 200, ms: Date.now() - t0 });
+    return { results, page_size: data?.page_size ?? null, consulta: p.query };
   } catch (e) {
     const status = e.response?.status;
     const msg = mensajeDe(e);
     logger.warn('consensus_error', { status, code: codigoDe(e), message: msg, clave: cual(clave) });
+    uso.registrarBusqueda({ clave, estado: status || 0, ms: Date.now() - t0 });
 
     // El plan de esta clave no incluye fragmentos de texto completo: se repite sin ellos y no se vuelven a pedir con ella
     if (status === 403 && p.include_full_text_chunks && intento < 2) {
@@ -162,6 +193,7 @@ async function pedir(params, intento = 0, clave = claveDisponible()) {
     if (cupoAgotado || status === 401 || status === 402) {
       st.hasta = Date.now() + ajustes.reintentoMs;
       st.motivo = { status, msg };
+      uso.marcarClave(clave, { status, msg, agotada: cupoAgotado });
       logger.warn('consensus_clave_apartada', { clave: cual(clave), status, hasta: new Date(st.hasta).toISOString() });
       const otra = claveDisponible();
       if (otra) return pedir(params, 0, otra);
@@ -195,6 +227,36 @@ function traducirError(status, msg) {
   return new HttpError(502, 'Consensus no respondió; inténtalo de nuevo en unos minutos.');
 }
 
+/**
+ * Para el panel de administración: cada clave en su orden, con su huella y sus 4 últimos caracteres
+ * (para reconocerla en el panel de Consensus). Nunca la clave entera.
+ */
+function estadoClaves() {
+  const ahora = Date.now();
+  return claves().map((k, i) => {
+    const st = estado(k);
+    const apartada = st.hasta > ahora;
+    return {
+      huella: uso.huella(k),
+      posicion: i + 1,
+      final: k.length > 12 ? k.slice(-4) : null,
+      apartada_hasta: apartada ? new Date(st.hasta).toISOString() : null,
+      motivo: apartada && st.motivo ? { status: st.motivo.status, msg: st.motivo.msg } : null,
+      sin_texto_completo: st.sinTextoCompleto
+    };
+  });
+}
+
+/** El administrador avisa de que una clave vuelve a servir (p. ej., activó el uso adicional): se prueba ya. */
+function reactivar(h) {
+  const k = claves().find(c => uso.huella(c) === h);
+  if (!k) return false;
+  const st = estado(k);
+  st.hasta = 0;
+  st.motivo = null;
+  return true;
+}
+
 /** Solo para las pruebas: vacía la caché, la fila y lo aprendido de la API. */
 function _reiniciar() {
   cache.clear();
@@ -202,6 +264,7 @@ function _reiniciar() {
   ultima = 0;
   tiposSeparadosPorComas = false;
   estados.clear();
+  guardadoCargado = null;
 }
 
-module.exports = { buscar, activo, queryString, _reiniciar, _http: http, ajustes };
+module.exports = { buscar, activo, queryString, estadoClaves, reactivar, _reiniciar, _http: http, ajustes };
