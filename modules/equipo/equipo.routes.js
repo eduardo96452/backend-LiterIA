@@ -4,6 +4,8 @@
 //   GET    /equipo                  miembros con su rol (fn_equipo_revision)
 //   GET    /mi-rol                  {rol} del usuario de la sesión, o null si no es del equipo
 //   POST   /equipo/invitaciones     {correo, rol} solo el propietario; envía el correo (límite «correo»)
+//   GET    /equipo/invitaciones     invitaciones pendientes (sin caducar), solo el propietario (sql/015)
+//   DELETE /equipo/invitaciones/:inv  anula una invitación pendiente, solo el propietario (sql/015)
 //   PATCH  /equipo/:uid             {rol} solo el propietario; el creador no cambia
 //   DELETE /equipo/:uid             solo el propietario; el creador no se quita
 //
@@ -21,12 +23,18 @@ const router = express.Router({ mergeParams: true });
 const P = req => req.valid.params;
 const conId = validate(S.params, 'params');
 const conMiembro = validate(S.paramsMiembro, 'params');
+const conInvitacion = validate(S.paramsInvitacion, 'params');
 
 router.get('/equipo', conId, h(async (req, res) => res.json(await svc.equipo(c(req), P(req).id))));
 router.get('/mi-rol', conId, h(async (req, res) => res.json(await svc.miRol(c(req), P(req).id))));
 
 router.post('/equipo/invitaciones', conId, validate(S.invitacion), limites.correo,
   h(async (req, res) => res.status(201).json(await svc.invitar(c(req), P(req).id, req.body))));
+
+router.get('/equipo/invitaciones', conId, h(async (req, res) => res.json(await svc.invitaciones(c(req), P(req).id))));
+
+router.delete('/equipo/invitaciones/:inv', conInvitacion,
+  h(async (req, res) => { await svc.anularInvitacion(c(req), P(req).id, P(req).inv); res.status(204).end(); }));
 
 router.patch('/equipo/:uid', conMiembro, validate(S.rol),
   h(async (req, res) => res.json(await svc.cambiarRol(c(req), P(req).id, P(req).uid, req.body))));

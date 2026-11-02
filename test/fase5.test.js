@@ -352,6 +352,23 @@ describe('equipo e invitaciones', () => {
     assert.equal((await pide('patch', `/revisiones/5/equipo/${uid}`, { rol: 'admin' })).status, 400);
   });
 
+  test('invitaciones pendientes y anular: la revisión sale de la URL; lo decide la base (sql/015)', async () => {
+    const PENDIENTES = [{ id_invitacion: 3, correo: 'ana@x.com', rol: 'revisor', fecha_envio: '2026-10-30T10:00:00Z', fecha_expiracion: '2026-11-13T10:00:00Z' }];
+    responder = base({ 'rpc:fn_invitaciones_pendientes': () => ok(PENDIENTES), 'rpc:fn_anular_invitacion': () => ok(null) });
+    let r = await pide('get', '/revisiones/5/equipo/invitaciones');
+    assert.deepEqual(r.body, PENDIENTES);
+    assert.deepEqual(rpcParams('fn_invitaciones_pendientes'), { p_id_rev: 5 });
+    r = await pide('delete', '/revisiones/5/equipo/invitaciones/3');
+    assert.equal(r.status, 204);
+    assert.deepEqual(rpcParams('fn_anular_invitacion'), { p_id_rev: 5, p_id_invitacion: 3 });
+    assert.equal((await pide('delete', '/revisiones/5/equipo/invitaciones/abc')).status, 400);
+
+    responder = base({ 'rpc:fn_invitaciones_pendientes': () => falla('42501', 'Solo el propietario ve las invitaciones') });
+    assert.equal((await pide('get', '/revisiones/5/equipo/invitaciones')).status, 403);
+    responder = base({ 'rpc:fn_invitaciones_pendientes': () => ok(PENDIENTES) }, { visible: false });
+    assert.equal((await pide('get', '/revisiones/5/equipo/invitaciones')).status, 404);
+  });
+
   test('aceptar invitación: el token va en el cuerpo; el mensaje de la base llega tal cual', async () => {
     const token = h.nuevoId();
     responder = () => ok({ id_detalles_revision: 5, rol: 'revisor' });

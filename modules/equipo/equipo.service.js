@@ -52,6 +52,21 @@ async function invitar(ctx, idRev, { correo, rol }) {
   return { ...resto, correo_enviado, ...(correo_enviado ? {} : { token }) };
 }
 
+/**
+ * Invitaciones pendientes y sin caducar (una por correo, la más reciente). Solo el propietario:
+ * lo comprueba fn_invitaciones_pendientes (sql/015).
+ */
+async function invitaciones(ctx, idRev) {
+  await revisiones.obtener(ctx, idRev);
+  return (await sb.rpc(cliente(ctx), 'fn_invitaciones_pendientes', { p_id_rev: idRev })) || [];
+}
+
+/** Anula una invitación pendiente (y las anteriores al mismo correo). Solo el propietario. */
+async function anularInvitacion(ctx, idRev, idInvitacion) {
+  await revisiones.obtener(ctx, idRev);
+  await sb.rpc(cliente(ctx), 'fn_anular_invitacion', { p_id_rev: idRev, p_id_invitacion: idInvitacion });
+}
+
 async function cambiarRol(ctx, idRev, idUsuario, { rol }) {
   await revisiones.obtener(ctx, idRev);
   await sb.rpc(cliente(ctx), 'fn_cambiar_rol_colaborador', { p_id_rev: idRev, p_id_usuario: idUsuario, p_rol: rol });
@@ -68,4 +83,4 @@ function aceptarInvitacion(ctx, { token }) {
   return sb.rpc(cliente(ctx), 'fn_aceptar_invitacion', { p_token: token });
 }
 
-module.exports = { equipo, miRol, invitar, cambiarRol, quitar, aceptarInvitacion };
+module.exports = { equipo, miRol, invitar, cambiarRol, quitar, aceptarInvitacion, invitaciones, anularInvitacion };
