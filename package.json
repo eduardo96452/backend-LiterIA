@@ -1,6 +1,6 @@
 {
   "name": "backend-chatgpt",
-  "version": "3.16.0",
+  "version": "3.19.0",
   "description": "Backend LiterIA - generación asistida de RSL, importación, cribado IA, referencias, colaboración, búsqueda semántica y panel admin",
   "main": "server.js",
   "private": true,

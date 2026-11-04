@@ -40,10 +40,13 @@ async function bases(token, idRev) {
     .eq('id_revision', idRev).order('id_base_bibliografica')) || [];
 }
 
+/** Con la configuración de cada cadena (sql/017). Si el script aún no se ejecutó, sin ella. */
 async function cadenas(token, idRev) {
-  return datos(await cliente(token).from('cadenas_busqueda')
-    .select('id_cadenas_busqueda, fuente, cadena_busqueda')
-    .eq('id_detalles_revision', idRev).order('id_cadenas_busqueda')) || [];
+  const consulta = cols => cliente(token).from('cadenas_busqueda').select(cols)
+    .eq('id_detalles_revision', idRev).order('id_cadenas_busqueda');
+  let r = await consulta('id_cadenas_busqueda, fuente, cadena_busqueda, configuracion');
+  if (r.error && faltaColumna(r.error)) r = await consulta('id_cadenas_busqueda, fuente, cadena_busqueda');
+  return datos(r) || [];
 }
 
 /** Con cuántos estudios usa cada criterio (para avisar antes de borrarlo). */
@@ -135,8 +138,21 @@ const guardarBase = (token, idRev, idBase, { nombre, url }) =>
 
 const borrarBase = (token, idRev, idBase) => rpc(token, 'fn_borrar_base', { p_id_rev: idRev, p_id: idBase });
 
-const guardarCadena = (token, idRev, fuente, texto) =>
-  rpc(token, 'fn_guardar_cadena', { p_id_rev: idRev, p_fuente: fuente, p_cadena: texto });
+/** ¿Falta la función con ese número de parámetros? (sql/017 sin ejecutar: solo está la de tres) */
+const faltaFuncion = e => e?.code === 'PGRST202' || /could not find the function|function .* does not exist/i.test(e?.message || '');
+
+/**
+ * Guarda la cadena y, si llega, su configuración (sql/017). Sin el script se guarda solo la cadena
+ * y la respuesta lo dice con sin_configuracion: la pantalla la rehace leyendo la cadena.
+ */
+async function guardarCadena(token, idRev, fuente, texto, configuracion) {
+  const p = { p_id_rev: idRev, p_fuente: fuente, p_cadena: texto };
+  if (configuracion === undefined) return rpc(token, 'fn_guardar_cadena', p);
+  const r = await cliente(token).rpc('fn_guardar_cadena', { ...p, p_configuracion: configuracion });
+  if (!r.error) return r.data;
+  if (!faltaFuncion(r.error)) throw sb.fromSupabaseError(r.error);
+  return { ...(await rpc(token, 'fn_guardar_cadena', p)), configuracion: null, sin_configuracion: true };
+}
 
 /** Estudios ya clasificados (no «Sin clasificar» ni «Duplicado») y sugerencias de la IA: lo que se pierde al cambiar criterios. */
 async function resumenCribado(token, idRev) {

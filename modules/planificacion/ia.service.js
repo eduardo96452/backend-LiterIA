@@ -15,6 +15,7 @@ const repo = require('./planificacion.repo');
 const plan = require('./planificacion.service');
 
 const corta = (v, max) => String(v ?? '').trim().slice(0, max);
+const norm = v => String(v ?? '').trim().normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 
 function exigirObjetivo(rev) {
   if (!String(rev.objetivo ?? '').trim()) {
@@ -139,6 +140,51 @@ const GENERADORES = {
       idioma
     });
     return { cadena: String(cadena).trim() };
+  },
+
+  /**
+   * Sinónimos y traducciones para marcar en la cadena (v3.19). Un concepto por componente del
+   * framework, con los términos GUARDADOS del paso 4; la clave del concepto es la misma que usa la
+   * pantalla («c» + id del componente, o «k» + id de la palabra si no tiene componente).
+   */
+  async 'terminos-cadena'(ctx, rev, { idiomas }) {
+    const r = await contexto(ctx, rev, ['framework', 'preguntas', 'terminos']);
+    const guardadas = r.terminos.filter(k => k.palabra_clave);
+    if (!guardadas.length) throw new HttpError(400, 'Guarda primero los términos clave (paso 4).');
+    const conceptos = new Map();
+    for (const k of guardadas.slice(0, 40)) {
+      const comp = k.fila?.componente_revision?.componente;
+      const clave = comp?.id_componente ? `c${comp.id_componente}` : `k${k.fila?.id_palabras_clave}`;
+      if (!conceptos.has(clave)) conceptos.set(clave, { clave, nombre: comp?.nombre || k.palabra_clave, terminos: [] });
+      conceptos.get(clave).terminos.push(k.palabra_clave, ...k.sinonimos.slice(0, 10).map(s => corta(s, 150)));
+    }
+    for (const c of conceptos.values()) c.terminos = [...new Set(c.terminos)].slice(0, 30);
+
+    // Los idiomas se piden por código; se aceptan aunque la IA cambie mayúsculas o use el nombre
+    const lista = idiomas.map(i => ({ codigo: corta(i.codigo, 12), nombre: corta(i.nombre, 40) }));
+    const porNombre = new Map(lista.flatMap(i => [[norm(i.codigo), i.codigo], [norm(i.nombre), i.codigo]]));
+    const propuestas = await P.terminosCadena(r, { conceptos: [...conceptos.values()], idiomas: lista });
+
+    const vistos = new Set([...conceptos.values()].flatMap(c => c.terminos.map(norm)));
+    const salida = new Map();
+    let total = 0;
+    for (const p of Array.isArray(propuestas) ? propuestas : []) {
+      const concepto = conceptos.get(String(p?.clave ?? '').trim());
+      if (!concepto || !Array.isArray(p.terminos)) continue;
+      const porIdioma = new Map();
+      for (const t of p.terminos) {
+        const textoT = corta(String(t?.texto ?? '').replace(/["()]/g, ''), 150);
+        const idioma = porNombre.get(norm(t?.idioma));
+        if (!textoT || !idioma || vistos.has(norm(textoT)) || total >= 160) continue;
+        if ((porIdioma.get(idioma) || 0) >= 4) continue;
+        vistos.add(norm(textoT));
+        porIdioma.set(idioma, (porIdioma.get(idioma) || 0) + 1);
+        if (!salida.has(concepto.clave)) salida.set(concepto.clave, []);
+        salida.get(concepto.clave).push({ texto: textoT, idioma });
+        total++;
+      }
+    }
+    return { conceptos: [...salida].map(([clave, terminos]) => ({ clave, terminos })) };
   },
 
   async criterios(ctx, rev) {

@@ -178,9 +178,9 @@ async function borrarBase(ctx, idRev, idBase) {
   return repo.borrarBase(ctx.token, idRev, idBase);
 }
 
-async function guardarCadena(ctx, idRev, fuente, { cadena }) {
+async function guardarCadena(ctx, idRev, fuente, { cadena, configuracion }) {
   await puedeEscribir(ctx, idRev);
-  return repo.guardarCadena(ctx.token, idRev, fuente, cadena);
+  return repo.guardarCadena(ctx.token, idRev, fuente, cadena, configuracion);
 }
 
 async function borrarCadena(ctx, idRev, fuente) {

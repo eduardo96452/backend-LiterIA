@@ -43,7 +43,14 @@ const base = z.object({
   url: z.string().trim().max(2000).default('')
 }).strict();
 
-const cadena = z.object({ cadena: texto(10000, 1, 'La cadena de búsqueda no puede estar vacía.') }).strict();
+/**
+ * configuracion (sql/017): lo que necesita la pantalla para volver a mostrar la cadena como estaba
+ * (los términos marcados de cada concepto, o cómo se adapta a una base). La lee solo el frontend;
+ * aquí se comprueba que sea un objeto y que no pase de 60 000 caracteres.
+ */
+const configuracion = z.record(z.string(), z.unknown()).nullable().optional()
+  .refine(v => v == null || JSON.stringify(v).length <= 60000, { message: 'La configuración de la cadena es demasiado grande.' });
+const cadena = z.object({ cadena: texto(10000, 1, 'La cadena de búsqueda no puede estar vacía.'), configuracion }).strict();
 
 /* ---------- Criterios ---------- */
 const criterio = z.object({
@@ -76,7 +83,12 @@ const campoCambio = z.object({
 const orden = z.object({ ids: z.array(id).min(1).max(500) }).strict();
 
 /* ---------- Sugerencias de la IA ---------- */
-const TIPOS_IA = ['objetivo', 'estructura', 'preguntas', 'palabras-clave', 'cadena', 'criterios', 'calidad', 'campos-extraccion'];
+const TIPOS_IA = ['objetivo', 'estructura', 'preguntas', 'palabras-clave', 'cadena', 'terminos-cadena', 'criterios', 'calidad', 'campos-extraccion'];
+/** Un idioma pedido para los términos de la cadena: código (EN, ES… o el que ponga el usuario) y nombre. */
+const idiomaTerminos = z.object({
+  codigo: z.string().trim().min(2).max(12).regex(/^[\p{L}-]+$/u, 'Código de idioma no válido.'),
+  nombre: texto(40, 1, 'Indica el nombre del idioma.')
+}).strict();
 const conTipoIa = z.object({ id, tipo: z.enum(TIPOS_IA) });
 const ia = {
   objetivo: z.object({}).strict(),
@@ -85,6 +97,8 @@ const ia = {
   // idioma de los términos (por defecto inglés, el de indexación de las bases)
   'palabras-clave': z.object({ idioma: texto(50, 1, 'Indica el idioma de los términos.').optional() }).strict(),
   cadena: z.object({ idioma: texto(50, 1, 'Indica el idioma de la cadena.') }).strict(),
+  // sinónimos y traducciones de los términos guardados (paso 4) para marcarlos en la cadena (v3.19)
+  'terminos-cadena': z.object({ idiomas: z.array(idiomaTerminos).min(1, 'Elige al menos un idioma.').max(8, 'Elige como mucho 8 idiomas.') }).strict(),
   criterios: z.object({}).strict(),
   calidad: z.object({}).strict(),
   'campos-extraccion': z.object({ cantidad: z.coerce.number().int().min(1).max(20).default(5) }).strict()

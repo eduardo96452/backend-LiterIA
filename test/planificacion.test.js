@@ -570,3 +570,93 @@ describe('sugerencias de la IA', () => {
     assert.equal((await pide('post', '/ia/preguntas', { cantidad: 50 })).status, 400);
   });
 });
+
+// ---------- v3.19: cadena por términos (configuración guardada y sugerencias en varios idiomas) ----------
+describe('cadena por términos (sql/017)', () => {
+  const prompt = () => llamadasIA.at(-1).map(m => m.content).join('\n');
+  const CONFIG = { version: 1, conceptos: [{ clave: 'c1', terminos: [{ texto: 'students', elegido: true, origen: 'paso4', idioma: 'EN' }] }] };
+
+  test('PUT /cadenas/global guarda la configuración con la cadena; null la vacía; sin ella, la llamada de siempre', async () => {
+    responder = base({ 'rpc:fn_guardar_cadena': p => ok({ id_cadenas_busqueda: 1, fuente: 'global', cadena_busqueda: 'students', configuracion: p[0][1][1].p_configuracion ?? null }) });
+    const r = await pide('put', '/cadenas/global', { cadena: ' students ', configuracion: CONFIG });
+    assert.equal(r.status, 200);
+    assert.deepEqual(rpcParams('fn_guardar_cadena'), { p_id_rev: 5, p_fuente: 'global', p_cadena: 'students', p_configuracion: CONFIG });
+    assert.deepEqual(r.body.configuracion, CONFIG);
+    consultas.length = 0;
+    await pide('put', '/cadenas/global', { cadena: 'students', configuracion: null });
+    assert.equal(rpcParams('fn_guardar_cadena').p_configuracion, null, 'null: se guarda sin configuración (escrita a mano)');
+    consultas.length = 0;
+    await pide('put', '/cadenas/global', { cadena: 'students' });
+    assert.deepEqual(rpcParams('fn_guardar_cadena'), { p_id_rev: 5, p_fuente: 'global', p_cadena: 'students' }, 'sin configuracion: la llamada de la v3.18');
+  });
+
+  test('la configuración debe ser un objeto y no muy grande', async () => {
+    responder = base({ 'rpc:fn_guardar_cadena': () => ok({}) });
+    assert.equal((await pide('put', '/cadenas/global', { cadena: 'x', configuracion: [1, 2] })).status, 400, 'una lista no');
+    assert.equal((await pide('put', '/cadenas/global', { cadena: 'x', configuracion: 'texto' })).status, 400);
+    const grande = await pide('put', '/cadenas/global', { cadena: 'x', configuracion: { texto: 'a'.repeat(60001) } });
+    assert.equal(grande.status, 400);
+    assert.match(JSON.stringify(grande.body), /demasiado grande/);
+  });
+
+  test('sin sql/017 (solo la función de tres parámetros) guarda la cadena y avisa con sin_configuracion', async () => {
+    responder = base({ 'rpc:fn_guardar_cadena': p => (p[0][1][1].p_configuracion !== undefined
+      ? falla('PGRST202', 'Could not find the function public.fn_guardar_cadena(p_cadena, p_configuracion, p_fuente, p_id_rev) in the schema cache')
+      : ok({ id_cadenas_busqueda: 1, fuente: 'global', cadena_busqueda: 'students' })) });
+    const r = await pide('put', '/cadenas/global', { cadena: 'students', configuracion: CONFIG });
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body, { id_cadenas_busqueda: 1, fuente: 'global', cadena_busqueda: 'students', configuracion: null, sin_configuracion: true });
+    const llamadas = consultas.filter(p => esRpc(p, 'fn_guardar_cadena')).map(p => Object.keys(p[0][1][1]).sort());
+    assert.deepEqual(llamadas, [['p_cadena', 'p_configuracion', 'p_fuente', 'p_id_rev'], ['p_cadena', 'p_fuente', 'p_id_rev']]);
+  });
+
+  test('GET /planificacion: las cadenas traen su configuración; sin la columna (sql/017), se leen sin ella', async () => {
+    let conColumna = true;
+    responder = base({ cadenas_busqueda: p => {
+      const cols = h.paso(p, 'select')[1][0];
+      if (cols.includes('configuracion') && !conColumna) return falla('42703', 'column cadenas_busqueda.configuracion does not exist');
+      return ok([{ id_cadenas_busqueda: 1, fuente: 'global', cadena_busqueda: 'students', ...(cols.includes('configuracion') ? { configuracion: CONFIG } : {}) }]);
+    } });
+    let r = await pide('get', '/planificacion');
+    assert.deepEqual(r.body.cadenas[0].configuracion, CONFIG);
+    conColumna = false;
+    r = await pide('get', '/planificacion');
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.cadenas, [{ id_cadenas_busqueda: 1, fuente: 'global', cadena_busqueda: 'students' }]);
+  });
+
+  test('IA terminos-cadena: con los términos GUARDADOS por componente; idiomas pedidos; filtra lo repetido, lo ajeno y lo que sobra', async () => {
+    responder = base({ palabras_clave: () => ok([]) });
+    assert.equal((await pide('post', '/ia/terminos-cadena', { idiomas: [{ codigo: 'ES', nombre: 'español' }] })).status, 400, 'sin términos guardados');
+    responder = base({ palabras_clave: () => ok([
+      { id_palabras_clave: 6, palabra_clave: 'tutor', sinonimos: [{ id_sinonimos: 2, sinonimo: 'ITS' }],
+        componente_revision: { id_componente: 2, componente: { id_componente: 2, nombre: 'Intervención', sigla: 'I' } } },
+      { id_palabras_clave: 9, palabra_clave: 'suelta', sinonimos: [], componente_revision: null }
+    ]) });
+    assert.equal((await pide('post', '/ia/terminos-cadena', {})).status, 400, 'los idiomas son obligatorios');
+    assert.equal((await pide('post', '/ia/terminos-cadena', { idiomas: [] })).status, 400);
+    assert.equal((await pide('post', '/ia/terminos-cadena', { idiomas: [{ codigo: 'E S', nombre: 'x' }] })).status, 400, 'código no válido');
+    respuestaIA = () => JSON.stringify({ conceptos: [
+      { clave: 'c2', terminos: [
+        { texto: 'tutor inteligente', idioma: 'es' }, { texto: '"sistema tutor"', idioma: 'ES' }, { texto: 'Tutor', idioma: 'EN' },
+        { texto: 'intelligent tutoring system', idioma: 'English' }, { texto: 'tutoria', idioma: 'PT' }, { texto: '', idioma: 'ES' },
+        { texto: 'a', idioma: 'ES' }, { texto: 'b', idioma: 'ES' }, { texto: 'c', idioma: 'ES' }
+      ] },
+      { clave: 'c99', terminos: [{ texto: 'ajeno', idioma: 'ES' }] },
+      { clave: 'k9', terminos: [{ texto: 'suelta en español', idioma: 'ES' }] }
+    ] });
+    const r = await pide('post', '/ia/terminos-cadena', { idiomas: [{ codigo: 'ES', nombre: 'español' }, { codigo: 'EN', nombre: 'English' }] });
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.conceptos, [
+      { clave: 'c2', terminos: [
+        { texto: 'tutor inteligente', idioma: 'ES' }, { texto: 'sistema tutor', idioma: 'ES' },
+        { texto: 'intelligent tutoring system', idioma: 'EN' }, { texto: 'a', idioma: 'ES' }, { texto: 'b', idioma: 'ES' }
+      ] },
+      { clave: 'k9', terminos: [{ texto: 'suelta en español', idioma: 'ES' }] }
+    ], 'sin el que ya tenía (Tutor), sin idiomas no pedidos (PT), sin conceptos ajenos (c99) y como mucho 4 por idioma');
+    assert.match(prompt(), /- c2 · Intervención: "tutor", "ITS"/);
+    assert.match(prompt(), /- k9 · suelta: "suelta"/);
+    assert.match(prompt(), /- ES = español/);
+    assert.match(prompt(), /- EN = English/);
+  });
+});

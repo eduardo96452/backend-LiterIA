@@ -6,7 +6,8 @@
 //   POST   /preguntas            PATCH, DELETE /preguntas/:p           preguntas de investigación
 //   POST   /palabras-clave       PUT, DELETE /palabras-clave/:k        con su componente y sinónimos
 //   GET    /bases   POST /bases  PUT, DELETE /bases/:b                 renombrar o borrar arrastra su cadena
-//   GET    /cadenas              PUT, DELETE /cadenas/:fuente           «global» o el nombre de una base
+//   GET    /cadenas              PUT, DELETE /cadenas/:fuente           «global» o el nombre de una base; PUT con
+//                                       {cadena, configuracion?} (sql/017: lo que la pantalla necesita para rehacerla)
 //   GET    /criterios POST /criterios PATCH, DELETE /criterios/:c
 //   POST   /calidad/preguntas    PATCH, DELETE /calidad/preguntas/:p
 //   POST   /calidad/respuestas   PATCH, DELETE /calidad/respuestas/:r  (el peso nuevo se aplica a lo ya evaluado)

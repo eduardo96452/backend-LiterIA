@@ -212,6 +212,41 @@ async function cadena(r, { grupos, idioma }) {
   return limpio(v.cadena);
 }
 
+/* ---------- 5b. Términos para marcar en la cadena, en varios idiomas (v3.19) ---------- */
+
+/**
+ * @param conceptos [{ clave, nombre, terminos: string[] }] términos guardados agrupados por componente
+ * @param idiomas   [{ codigo, nombre }] idiomas pedidos (el código es el que debe volver en «idioma»)
+ * @returns [{ clave, terminos: [{ texto, idioma }] }] (lo filtra ia.service)
+ */
+async function terminosCadena(r, { conceptos, idiomas }) {
+  const instrucciones = [
+    'TAREA: propone términos de búsqueda adicionales para cada concepto de la cadena de esta revisión sistemática:',
+    'sinónimos y su equivalente en cada idioma pedido. La persona elegirá cuáles añade a la cadena.',
+    '',
+    datosRevision(r, { sin: ['terminos', 'criterios'] }),
+    '',
+    'CONCEPTOS (clave · nombre: términos que ya tiene)',
+    ...conceptos.map(c => `- ${c.clave} · ${corta(c.nombre, 120)}: ${c.terminos.map(t => `"${corta(t, 150)}"`).join(', ')}`),
+    '',
+    'IDIOMAS PEDIDOS (código = idioma)',
+    ...idiomas.map(i => `- ${i.codigo} = ${i.nombre}`),
+    '',
+    'REGLAS',
+    '- Para cada concepto y cada idioma pedido, de 2 a 4 términos.',
+    '- En el idioma en que ya están los términos del concepto: sinónimos, variantes ortográficas, siglas o su forma desarrollada que todavía falten.',
+    '- En los demás idiomas: el término técnico con que la literatura de ese idioma nombra el concepto, no una traducción palabra por palabra.',
+    '- No repitas los términos que el concepto ya tiene ni los que propones para otro concepto.',
+    '- No uses términos genéricos que inundan los resultados (estudio, análisis, impacto, sistema, tecnología, study, analysis, system…).',
+    '- Cada término sin comillas, sin paréntesis y sin operadores (AND, OR, NOT).',
+    '- «idioma» es el código de la lista de idiomas pedidos.',
+    '',
+    'Devuelve: { "conceptos": [ { "clave": "", "terminos": [ { "texto": "", "idioma": "" } ] } ] }'
+  ].join('\n');
+  const v = await pedirJson(r.idioma, instrucciones, 4000);
+  return Array.isArray(v?.conceptos) ? v.conceptos : [];
+}
+
 /* ---------- 6. Criterios de selección ---------- */
 
 async function criterios(r, { anioActual = new Date().getFullYear() } = {}) {
@@ -309,4 +344,4 @@ async function camposExtraccion(r, { cantidad, preguntasConId = [], existentes =
     .slice(0, cantidad);
 }
 
-module.exports = { objetivo, estructura, preguntas, palabrasClave, cadena, criterios, calidad, camposExtraccion, datosRevision, TIPOS_CAMPO };
+module.exports = { objetivo, estructura, preguntas, palabrasClave, cadena, terminosCadena, criterios, calidad, camposExtraccion, datosRevision, TIPOS_CAMPO };
